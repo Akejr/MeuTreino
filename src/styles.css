@@ -916,9 +916,14 @@ textarea {
 
 /* ---------- bottom sheet ---------- */
 .sheet-backdrop {
+  /* altura e topo seguem a área visível (visualViewport) quando o teclado abre */
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
   z-index: 50;
+  overscroll-behavior: contain;
   background: rgba(0, 0, 0, 0.42);
   display: flex;
   align-items: flex-end;
@@ -933,7 +938,7 @@ textarea {
 .sheet {
   width: 100%;
   max-width: 640px;
-  max-height: 88dvh;
+  max-height: min(88dvh, calc(100% - 8px));
   background: var(--surface);
   border-radius: 28px 28px 0 0;
   padding: 8px 18px calc(env(safe-area-inset-bottom) + 18px);
@@ -942,7 +947,16 @@ textarea {
   animation: up 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .sheet.full {
-  height: 88dvh;
+  height: min(88dvh, calc(100% - 8px));
+}
+/* teclado aberto: o painel ocupa toda a área visível e perde a folga da barra inicial */
+.sheet-backdrop.kb .sheet {
+  max-height: calc(100% - 8px);
+  padding-bottom: 10px;
+  animation: none;
+}
+.sheet-backdrop.kb .sheet.full {
+  height: calc(100% - 8px);
 }
 @keyframes up {
   from {
@@ -976,6 +990,12 @@ textarea {
   flex: 1;
   min-height: 0;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.sheet.full .sheet-body {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .changes {
   white-space: pre-wrap;
@@ -991,12 +1011,15 @@ textarea {
 .ai-sheet {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 .ai-scroll {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .ai-foot {
   flex-shrink: 0;

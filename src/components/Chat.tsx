@@ -6,9 +6,22 @@ import RichText from './RichText';
 export function ChatMessages({ messages, loading }: { messages: ChatMsg[]; loading?: boolean }) {
   const end = useRef<HTMLDivElement>(null);
   const visible = messages.filter((m) => !m.hidden);
+  // Dentro do chat da IA rola só a lista (scrollIntoView rolaria a página inteira no iOS).
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'nearest' });
+    const el = end.current;
+    const box = el?.closest('.ai-scroll');
+    if (box) box.scrollTop = box.scrollHeight;
+    else el?.scrollIntoView({ block: 'nearest' });
   }, [visible.length, loading]);
+  // Ao abrir o teclado a área visível encolhe: mantém a última mensagem à vista.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const box = end.current?.closest('.ai-scroll');
+    if (!vv || !box) return;
+    const keep = () => (box.scrollTop = box.scrollHeight);
+    vv.addEventListener('resize', keep);
+    return () => vv.removeEventListener('resize', keep);
+  }, [visible.length > 0]);
   if (!visible.length && !loading) return null;
   return (
     <div className="chat">
