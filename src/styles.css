@@ -1370,6 +1370,19 @@ textarea {
   border: 1.5px solid var(--ink);
   border-radius: 16px;
 }
+/* versão nova do app */
+.update-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 12px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 18px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+}
 /* descanso: barra fina presa no topo, o cartão da série cabe na tela sem rolar */
 .rest-bar {
   position: sticky;

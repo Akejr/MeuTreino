@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { initBackfill } from './lib/backfill';
 import { initStorage } from './lib/storage';
+import { initUpdates } from './lib/updates';
 import { initSync, onSynced } from './lib/sync';
 import { autoPauseStale, ensureTraining } from './training/actions';
 import './styles.css';
@@ -19,6 +20,7 @@ initStorage().finally(() => {
   initSync();
   // Completa a qualidade de refeições antigas quando houver internet (também as que chegam pela sincronização).
   onSynced(initBackfill());
+  initUpdates();
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

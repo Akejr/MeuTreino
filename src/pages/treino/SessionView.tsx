@@ -157,15 +157,18 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
 
       {resting && s.descansoAte && <RestCard ate={s.descansoAte} total={s.descansoSeg ?? 60} onAdd={() => addRest(id, 30)} onSkip={() => skipRest(id)} />}
 
-      {step && <CurrentStep key={step.id} s={s} ps={ps} step={step} data={data} hoje={hoje} />}
+      {step && <CurrentStep key={step.id} s={s} ps={ps} step={step} data={data} hoje={hoje} onAdd={() => setAddOpen(true)} />}
 
       {s.status === 'em_andamento' && !step && (
         <section className="card hero">
           <span className="hero-label">Tudo feito</span>
           <h2 className="hero-title">Treino completo</h2>
-          <p className="hero-sub">{fmtDur(elapsed)} de treino. Confira o resumo e conclua para salvar.</p>
+          <p className="hero-sub">{fmtDur(elapsed)} de treino. Se ainda tiver disposição e tempo, acrescente mais um exercício; senão, conclua para salvar.</p>
           <button className="btn light block" onClick={concluir}>
             <IconCheck /> Concluir treino
+          </button>
+          <button className="btn ghost-light block" onClick={() => setAddOpen(true)}>
+            <IconPlus /> Adicionar exercício
           </button>
         </section>
       )}
@@ -199,7 +202,9 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
   );
 }
 
-function CurrentStep({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; step: Step; data: AppData; hoje: string }) {
+type StepProps = { s: Session; ps: PlanSession; step: Step; data: AppData; hoje: string; onAdd: () => void };
+
+function CurrentStep({ s, ps, step, data, hoje, onAdd }: StepProps) {
   const slot = ps.slots.find((x) => x.id === step.slotId)!;
   const st = s.slots[slot.id];
   const ex = getEx(step.exerciseId);
@@ -227,10 +232,10 @@ function CurrentStep({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession;
     );
   }
 
-  return <StepCard s={s} ps={ps} step={step} data={data} hoje={hoje} />;
+  return <StepCard s={s} ps={ps} step={step} data={data} hoje={hoje} onAdd={onAdd} />;
 }
 
-function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; step: Step; data: AppData; hoje: string }) {
+function StepCard({ s, ps, step, data, hoje, onAdd }: StepProps) {
   const slot = ps.slots.find((x) => x.id === step.slotId)!;
   const ex = getEx(step.exerciseId);
   const eq = data.equipment[ex.equip];
@@ -426,6 +431,9 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
         </button>
         <button className="link-btn" onClick={() => setSlotStatus(s.id, slot.id, 'pulado')}>
           <IconSkip /> Pular exercício
+        </button>
+        <button className="link-btn" onClick={onAdd}>
+          <IconPlus /> Adicionar exercício
         </button>
       </div>
 

@@ -6,6 +6,7 @@ import { IconBack, IconCloudOff, IconCloudOk, IconConfig, IconDieta, IconFlame, 
 import { showSession, useViewingSession } from './lib/sessionUI';
 import { pendingCount, useData } from './lib/storage';
 import { useSyncStatus } from './lib/sync';
+import { applyUpdate, useUpdateReady } from './lib/updates';
 import Config from './pages/Config';
 import Dieta from './pages/Dieta';
 import Habitos from './pages/Habitos';
@@ -52,6 +53,20 @@ function SyncBadge({ onClick }: { onClick: () => void }) {
       <Icon className={st.state === 'syncing' ? 'spin' : ''} />
       {pend > 0 && st.state !== 'syncing' && <span>{pend}</span>}
     </button>
+  );
+}
+
+/** Versão nova baixada: fora do treino troca sozinha; durante o treino espera ele tocar. */
+function UpdateBar({ emTreino }: { emTreino: boolean }) {
+  const pronta = useUpdateReady();
+  if (!pronta) return null;
+  return (
+    <div className="update-bar">
+      <span className="grow">{emTreino ? 'Nova versão do app. As séries registradas continuam salvas.' : 'Nova versão do app disponível.'}</span>
+      <button className="btn small light" onClick={applyUpdate}>
+        Atualizar
+      </button>
+    </div>
   );
 }
 
@@ -117,6 +132,7 @@ export default function App() {
       )}
 
       <main className={`main ${sessaoNaTela ? 'session-main' : ''}`} key={sessaoNaTela ?? tab}>
+        <UpdateBar emTreino={emTreino} />
         {sessaoNaTela ? (
           <SessionView id={sessaoNaTela} onExit={() => showSession(null)} />
         ) : (

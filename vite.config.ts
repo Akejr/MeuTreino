@@ -46,6 +46,8 @@ export default defineConfig(({ mode }) => {
       localApi(env),
       VitePWA({
         registerType: 'autoUpdate',
+        // O registro e a troca de versão ficam em src/lib/updates.ts.
+        injectRegister: false,
         includeAssets: ['favicon.ico', 'apple-touch-icon-180x180.png', 'icon.svg'],
         manifest: {
           name: 'Meu Treino',
@@ -66,6 +68,9 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
+          // Sem o registro automático do plugin estes dois ficam desligados: a versão nova ficaria esperando.
+          skipWaiting: true,
+          clientsClaim: true,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
