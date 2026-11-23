@@ -3,7 +3,7 @@
  * sequência de séries, duração, volume e trocas. A IA nunca decide carga.
  */
 import type { AppData, Equipment, PlanSession, PlanSlot, PlanVersion, Session, SetLog, SetTipo, SlotState, TrainingSettings } from '../types';
-import { daysBetween, fmtNum } from '../lib/utils';
+import { daysBetween, fmtDur, fmtNum } from '../lib/utils';
 import { CATALOG, getEx, isActive, resolveExercise, type Grupo } from './catalog';
 
 export const fmtW = (n: number) => fmtNum(n, 2);
@@ -121,7 +121,8 @@ export const prescOf = (slot: PlanSlot, t: TrainingSettings): Presc => ({
   limitePct: slot.limitePct ?? t.limitePct,
 });
 
-export type Acao = 'calibrar' | 'manter' | 'subir' | 'reduzir' | 'dor' | 'recalibrar' | 'posicao' | 'perguntar';
+/** validar = peso ajustado na sessão anterior: começa pelo último peso válido e confirma na 1ª série. */
+export type Acao = 'calibrar' | 'manter' | 'subir' | 'reduzir' | 'dor' | 'recalibrar' | 'posicao' | 'perguntar' | 'validar';
 
 export interface SidePlan {
   acao: Acao;
@@ -175,6 +176,208 @@ export function plusOne(metas: number[], repMax: number): number[] {
 }
 
 const fill = <T,>(n: number, v: T) => Array.from({ length: n }, () => v);
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+
+// ===================== esforço, capacidade e próximo peso =====================
+
+/**
+ * Reserva informada. `minimo` = sabe-se só que sobraram pelo menos N ("4+" sem saber quanto, "10+").
+ * Registros antigos com 4 vinham do botão "4+" e contam como mínimo.
+ */
+export function rirOf(s: Pick<SetLog, 'rir' | 'rirAprox' | 'rirMais'>): { v: number | null; minimo: boolean } {
+  if (s.rir == null) return { v: null, minimo: false };
+  if (s.rirMais) return { v: s.rir, minimo: true };
+  if (s.rir === 4 && !s.rirAprox) return { v: 4, minimo: true };
+  return { v: s.rir, minimo: false };
+}
+
+export function rirTexto(s: Pick<SetLog, 'rir' | 'rirAprox' | 'rirMais'>): string {
+  const r = rirOf(s);
+  if (r.v == null) return 'reserva não informada';
+  if (r.v === 0) return 'nenhuma repetição de reserva';
+  const n = r.minimo ? `${r.v} ou mais` : s.rirAprox ? `cerca de ${r.v}` : String(r.v);
+  return `${n} ${r.v === 1 && !r.minimo ? 'repetição' : 'repetições'} de reserva`;
+}
+
+/** Reserva em poucas letras, para listas: 2, ≈8, 4+, 10+, não sei. */
+export function rirCurto(s: Pick<SetLog, 'rir' | 'rirAprox' | 'rirMais'>): string {
+  const r = rirOf(s);
+  if (r.v == null) return 'não sei';
+  if (r.minimo) return `${r.v}+`;
+  return s.rirAprox ? `≈${r.v}` : String(r.v);
+}
+
+/** Reserva alvo: o meio da faixa prescrita (1–3 → 2). */
+export const alvoRir = (p: Presc) => Math.round((p.rirMin + p.rirMax) / 2);
+
+/** Repetições que a carga da série permitiria deixando a reserva alvo. null = reserva desconhecida. */
+function idealReps(s: Pick<SetLog, 'reps' | 'rir' | 'rirAprox' | 'rirMais'>, p: Presc): number | null {
+  const r = rirOf(s);
+  return r.v == null || s.reps == null ? null : s.reps + r.v - alvoRir(p);
+}
+
+/**
+ * Série em que o peso mudou em relação à anterior para achar a carga certa.
+ * Registros antigos não têm a marca: conta como ajuste quando o peso usado não foi o sugerido.
+ * Peso diferente igual ao sugerido (sem a marca) = sequência planejada.
+ */
+export function isCalibration(s: SetLog, prev: SetLog | undefined): boolean {
+  if (!prev || s.carga == null || prev.carga == null || s.carga === prev.carga) return false;
+  return s.ajuste === 'calibracao' || s.carga !== s.cargaSugerida;
+}
+
+/** Peso que o músculo move: na assistida é o peso corporal menos a ajuda. */
+function moved(eq: Equipment | undefined, w: number, peso?: number): number | null {
+  if (eq?.base === 'assistencia') return peso && peso > w ? peso - w : null;
+  return w > 0 ? w : null;
+}
+
+/** Repetições até a falha estimadas com outra carga, a partir de uma série (fórmula de Epley). */
+export function capAt(eq: Equipment | undefined, de: number, cap: number, para: number, peso?: number): number | null {
+  const a = moved(eq, de, peso);
+  const b = moved(eq, para, peso);
+  if (a == null || b == null) return null;
+  const e1 = a * (1 + cap / 30);
+  return 30 * (e1 / b - 1);
+}
+
+/** Mais difícil? (na assistida, menos ajuda é mais difícil). */
+const maisDificil = (eq: Equipment | undefined, a: number, b: number) => (eq?.base === 'assistencia' ? a < b : a > b);
+
+export interface Subida {
+  /** subir = cabe no limite automático; avaliar = salto grande ou sem peso corporal para medir (ele decide). */
+  tipo: 'subir' | 'avaliar' | 'perguntar' | 'limite';
+  para?: number;
+  pct?: number | null;
+  kgMenosAjuda?: number;
+  /** Repetições estimadas no peso novo deixando a reserva alvo (sem limitar à faixa). */
+  est?: number | null;
+}
+
+/**
+ * Próximo peso disponível a partir de `w` (registrado por posição) e se o salto cabe no limite automático.
+ * Pesos já usados não contam como "próximo": pode existir um intermediário, então o app pergunta.
+ */
+export function proximaCarga(ctx: Ctx, w: number, cap: number): Subida {
+  const { eq, presc: p } = ctx;
+  const nx = harder(eq, w);
+  if (nx === undefined) return { tipo: 'perguntar' };
+  if (nx === null) return { tipo: 'limite' };
+  const j = jump(eq, w, nx, ctx.pesoCorporal);
+  const c = capAt(eq, w, cap, nx, ctx.pesoCorporal);
+  const cabe = j.pct != null && j.pct <= p.limitePct + 1e-9;
+  return { tipo: cabe ? 'subir' : 'avaliar', para: nx, pct: j.pct, kgMenosAjuda: j.kgMenosAjuda, est: c == null ? null : c - alvoRir(p) };
+}
+
+export function saltoTexto(eq: Equipment | undefined, de: number, para: number, pct: number | null | undefined): string {
+  const u = unitOf(eq);
+  if (isAssist(eq)) return `${fmtW(de - para)} ${u} a menos de ajuda${pct != null ? `, +${fmtPct(pct)} no peso movido` : ''}`;
+  return `+${fmtW(para - de)} ${u}${pct != null ? `, +${fmtPct(pct)}` : ''}`;
+}
+
+/** "fez 9 até a falha", "fez 8 com 3 repetições de reserva". */
+export function comReserva(s: Pick<SetLog, 'rir' | 'rirAprox' | 'rirMais'>): string {
+  const r = rirOf(s);
+  if (r.v === 0) return 'até a falha';
+  return r.v == null ? 'sem informar a reserva' : `com ${rirTexto(s)}`;
+}
+
+type PlanBase = Pick<SidePlan, 'refCarga' | 'ultima'>;
+
+/**
+ * A sessão anterior teve o peso ajustado para achar a carga: o último peso válido vira a carga
+ * inicial, confirmada na 1ª série. Só uma sequência planejada é repetida por posição.
+ */
+function fromCalibration(ws: SetLog[], ctx: Ctx, base: PlanBase): SidePlan {
+  const { presc: p, eq } = ctx;
+  const n = p.series;
+  const u = unitOf(eq);
+  const Wf = (w: number | null) => (w == null ? 'o mesmo peso' : `${fmtW(w)} ${u}`);
+  const hist = `Na última sessão você ajustou o peso durante o exercício (${ws.map((s) => (s.carga == null ? '?' : fmtW(s.carga))).join('/')} ${u} × ${ws.map((s) => s.reps ?? '?').join('/')}).`;
+  const validas = ws.filter((s) => s.carga != null && s.reps != null && !s.ajuda && !s.dor);
+  const finalLoad = ws[ws.length - 1].carga;
+  const ref = validas.find((s) => s.carga === finalLoad) ?? validas[validas.length - 1];
+  if (!ref) {
+    return {
+      ...base,
+      refCarga: finalLoad,
+      acao: 'validar',
+      cargas: fill(n, finalLoad),
+      metas: fill(n, p.repMin),
+      motivo: `${hist} Comece com ${Wf(finalLoad)} mirando ${p.repMin}, sem ajuda, e confirme o peso na 1ª série.`,
+    };
+  }
+  const Lc = ref.carga!;
+  const out = { ...base, refCarga: Lc };
+  const fez = `${hist} Com ${Wf(Lc)} você fez ${ref.reps} ${comReserva(ref)}.`;
+  const r = rirOf(ref);
+  const id = idealReps(ref, p);
+  if (r.v == null || id == null) {
+    const m = clamp(ref.reps!, p.repMin, p.repMax);
+    return { ...out, acao: 'validar', cargas: fill(n, Lc), metas: fill(n, m), motivo: `${fez} Comece com ${Wf(Lc)} mirando ${m} e confirme o esforço na 1ª série.` };
+  }
+  const cap = ref.reps! + r.v;
+
+  if (id < p.repMin) {
+    const leves = validas.map((s) => s.carga!).filter((w) => maisDificil(eq, Lc, w));
+    const lower = leves.length ? (isAssist(eq) ? Math.min(...leves) : Math.max(...leves)) : easier(eq, Lc);
+    const est = lower != null ? capAt(eq, Lc, cap, lower, ctx.pesoCorporal) : null;
+    const m = est == null ? p.repMin : clamp(Math.floor(est - alvoRir(p)), p.repMin, p.repMax);
+    return {
+      ...out,
+      acao: 'reduzir',
+      cargas: fill(n, lower ?? Lc),
+      metas: fill(n, m),
+      motivo: `${fez} Ficou mais pesado que o planejado (${p.repMin}–${p.repMax} com ${p.rirMin} a ${p.rirMax} de reserva). ${
+        lower != null ? `Comece com ${Wf(lower)} mirando ${m}` : `Comece com um peso um pouco menor que ${Wf(Lc)} mirando ${p.repMin}`
+      } e confirme na 1ª série.`,
+    };
+  }
+
+  if (id > p.repMax && r.v > 0) {
+    const sub = proximaCarga(ctx, Lc, cap);
+    const pesada = sub.est != null && sub.est < p.repMin;
+    if (sub.tipo === 'subir' && sub.para != null && !pesada) {
+      return {
+        ...out,
+        acao: 'subir',
+        cargas: fill(n, sub.para),
+        metas: fill(n, p.repMin),
+        salto: { de: Lc, para: sub.para, pct: sub.pct ?? null, kgMenosAjuda: sub.kgMenosAjuda },
+        motivo: `${fez} Ainda sobrou folga. Comece testando ${Wf(sub.para)} (${saltoTexto(eq, Lc, sub.para, sub.pct)}), o próximo peso disponível, no limite inferior da faixa: ${p.repMin} repetições. Se ficar abaixo de ${p.repMin}, volte para ${Wf(Lc)}.`,
+      };
+    }
+    const salto = sub.para != null ? { de: Lc, para: sub.para, pct: sub.pct ?? null, kgMenosAjuda: sub.kgMenosAjuda } : undefined;
+    const extra =
+      sub.tipo === 'perguntar'
+        ? ` Para subir, informe o próximo peso disponível acima de ${Wf(Lc)}.`
+        : sub.tipo === 'limite'
+          ? ` ${Wf(Lc)} é o limite deste aparelho.`
+          : sub.para != null && pesada
+            ? ` O próximo peso, ${Wf(sub.para)}, parece pesado demais para ${p.repMin} repetições.`
+            : sub.para != null
+              ? ` O próximo peso, ${Wf(sub.para)}, é um salto de ${saltoTexto(eq, Lc, sub.para, sub.pct)}: ${sub.pct == null ? 'preencha seu peso no perfil para o app avaliar' : `passa do limite automático de ${fmtPct(p.limitePct)}`}.`
+              : '';
+    return {
+      ...out,
+      acao: sub.tipo === 'perguntar' ? 'perguntar' : 'validar',
+      perguntarProximo: sub.tipo === 'perguntar' ? Lc : undefined,
+      salto,
+      cargas: fill(n, Lc),
+      metas: fill(n, p.repMax),
+      motivo: `${fez}${extra} Comece com ${Wf(Lc)} mirando ${p.repMax}, o topo da faixa, e confirme na 1ª série.`,
+    };
+  }
+
+  const m = clamp(id, p.repMin, p.repMax);
+  return {
+    ...out,
+    acao: 'validar',
+    cargas: fill(n, Lc),
+    metas: fill(n, m),
+    motivo: `${fez} Comece com ${Wf(Lc)} mirando ${m}, para deixar cerca de ${alvoRir(p)} de reserva, e confirme na 1ª série.`,
+  };
+}
 
 /** Plano da próxima sessão para um exercício (e lado), a partir dos registros confirmados. */
 export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx: Ctx): SidePlan {
@@ -206,25 +409,31 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
   const base = { refCarga: L, ultima: { cargas: loads, reps, data: last.data } };
   const dias = daysBetween(last.data, ctx.hoje);
 
+  // Peso ajustado durante a sessão para achar a carga: vale o último peso, não a sequência.
+  const calib = ws.some((s, i) => isCalibration(s, ws[i - 1]));
+  const final = ws[ws.length - 1].carga;
+  const cargasRef = calib ? fill(n, final) : cargasLast;
+
   if (ws.some((s) => s.dor)) {
-    return { ...base, acao: 'dor', cargas: cargasLast, metas: metasLast, motivo: 'Na última sessão você marcou dor neste exercício. A progressão fica suspensa.' };
+    return { ...base, acao: 'dor', cargas: cargasRef, metas: metasLast, motivo: 'Na última sessão você marcou dor neste exercício. A progressão fica suspensa.' };
   }
   if (dias > 21) {
     return {
       ...base,
       acao: 'recalibrar',
-      cargas: cargasLast,
+      cargas: cargasRef,
       metas: fill(n, p.repMin),
       motivo: `Faz ${dias} dias desde a última vez. Recalibre: comece pelo peso anterior e ajuste depois da 1ª série.`,
     };
   }
+  if (calib) return fromCalibration(ws, ctx, base);
   if (!loads.every((l) => l === L)) {
     return {
       ...base,
       acao: 'posicao',
       cargas: cargasLast,
       metas: metasLast,
-      motivo: 'Na última sessão as cargas mudaram entre as séries. Cada série é comparada com a mesma posição.',
+      motivo: 'Na última sessão você seguiu cargas diferentes por série. Cada série é comparada com a mesma posição.',
     };
   }
   if (ws.some((s) => s.ajuda)) {
@@ -236,8 +445,13 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
 
   const allTop = ws.length >= n && ws.every((s) => (s.reps ?? 0) >= p.repMax);
   const margem = ws.every((s) => (s.rir ?? 0) >= p.rirMin);
+  // Folga acima do planejado (4+) em que todas as séries chegariam ao topo deixando a reserva alvo.
+  const ideais = ws.map((s) => idealReps(s, p));
+  const comFolga = ws.some((s) => (rirOf(s).v ?? 0) > p.rirMax);
+  const folgaTodas = comFolga && margem && ws.length >= n && ideais.every((x) => x != null && x >= p.repMax);
+  const feitoTxt = allTop && margem ? `Você fez ${repsTxt} com margem.` : `Você fez ${repsTxt} com bastante reserva (${ws.map(rirCurto).join('/')}).`;
 
-  if (allTop && margem && L != null) {
+  if (((allTop && margem) || folgaTodas) && L != null) {
     const teto = ceilingStreak(exps, L, p);
     const nx = harder(eq, L);
     const topo = fill(n, p.repMax);
@@ -250,8 +464,8 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
         teto,
         perguntarProximo: L,
         motivo: isAssist(eq)
-          ? `Você fez ${repsTxt} com margem. Para progredir, informe o próximo nível com menos assistência que ${W}.`
-          : `Você fez ${repsTxt} com margem. Para subir, informe o próximo peso disponível acima de ${W}.`,
+          ? `${feitoTxt} Para progredir, informe o próximo nível com menos assistência que ${W}.`
+          : `${feitoTxt} Para subir, informe o próximo peso disponível acima de ${W}.`,
       };
     }
     if (nx === null) {
@@ -289,7 +503,7 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
         cargas: fill(n, nx),
         metas: fill(n, p.repMin),
         salto,
-        motivo: `Você fez ${repsTxt} com margem. Teste ${fmtW(nx)} ${u} (${saltoTxt}) mirando ${p.repMin} repetições. Se a 1ª série ficar abaixo de ${p.repMin}, volte para ${W}.`,
+        motivo: `${feitoTxt} Teste ${fmtW(nx)} ${u} (${saltoTxt}) mirando ${p.repMin} repetições. Se a 1ª série ficar abaixo de ${p.repMin}, volte para ${W}.`,
       };
     }
     const saltoGrande = isAssist(eq)
@@ -303,7 +517,7 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
       salto,
       teto,
       revisarFaixa: teto >= 2,
-      motivo: `${saltoGrande} Mantenha ${W}.${teto >= 2 ? ` Teto da faixa atingido com folga em ${teto} sessões seguidas: revise a faixa.` : ''}`,
+      motivo: `${feitoTxt} ${saltoGrande} Passa do limite automático de ${fmtPct(p.limitePct)}: mantenha ${W} mirando ${p.repMax}, ou teste o peso novo se quiser.${teto >= 2 ? ` Teto da faixa atingido com folga em ${teto} sessões seguidas: revise a faixa.` : ''}`,
     };
   }
 
@@ -335,6 +549,23 @@ export function suggestNext(exerciseId: string, lado: 'D' | 'E' | undefined, ctx
         motivo: `Só a última série caiu (${repsTxt}) e o descanso antes dela foi curto. Descanse mais antes de mudar a carga.`,
       };
     }
+  }
+
+  if (comFolga) {
+    // Séries com 4+: aproveita a folga em mais repetições, dentro da faixa.
+    const metas = metasLast.map((m, i) => {
+      const s = at(ws, i);
+      const id = idealReps(s, p);
+      return (rirOf(s).v ?? 0) > p.rirMax && id != null ? clamp(Math.max(id, m), p.repMin, p.repMax) : m;
+    });
+    const novas = metas.reduce((a, b) => a + b, 0) > metasLast.reduce((a, b) => a + b, 0) ? metas : plusOne(metas, p.repMax);
+    return {
+      ...base,
+      acao: 'manter',
+      cargas: fill(n, L),
+      metas: novas,
+      motivo: `Na última sessão: ${W} × ${repsTxt}, com mais reserva que o planejado (${ws.map(rirCurto).join('/')}). Mantenha ${W} e tente ${novas.join('/')}, aproveitando a folga dentro da faixa ${p.repMin}–${p.repMax}.`,
+    };
   }
 
   if (ws.some((s) => s.rir === 0)) {
@@ -467,6 +698,12 @@ export interface StepSuggestion {
   plan?: SidePlan;
   /** Botão "voltar para X" depois de testar um peso novo. */
   voltarPara?: number;
+  /** Salto grande: o app não aplica sozinho, mostra como opção. */
+  opcao?: { carga: number; reps: number; texto: string };
+  /** Pergunta o próximo peso disponível a partir desta carga. */
+  perguntarProximo?: number;
+  /** A carga sugerida segue uma sequência planejada por posição (não é ajuste). */
+  sequencia?: boolean;
 }
 
 export function stepCtx(data: AppData, slot: PlanSlot, exerciseId: string, hoje: string, excludeSession?: string): Ctx {
@@ -515,49 +752,167 @@ export function suggestForStep(step: Step, session: Session, slot: PlanSlot, dat
     return { carga: null, reps, motivo: `${motivo} Escolha um peso fácil.`, plan: planD };
   }
 
-  const done = Object.values(data.sets)
-    .filter((s) => s.sessionId === session.id && s.exerciseId === step.exerciseId && s.tipo === 'trabalho' && s.status === 'feita' && s.lado === step.lado)
-    .sort((a, b) => a.posicao - b.posicao);
+  const p = presc;
   const idx = step.posicao - 1;
+  const done = Object.values(data.sets)
+    .filter(
+      (s) =>
+        s.sessionId === session.id &&
+        s.exerciseId === step.exerciseId &&
+        s.tipo === 'trabalho' &&
+        s.status === 'feita' &&
+        s.lado === step.lado &&
+        s.posicao < step.posicao,
+    )
+    .sort((a, b) => a.posicao - b.posicao);
   const meta = (i: number) => planD.metas[Math.min(i, planD.metas.length - 1)] ?? null;
+  const W = (w: number | null) => (w == null ? 'o mesmo peso' : `${fmtW(w)} ${u}`);
+  const seq = planD.acao === 'posicao';
+  const planejada = planD.cargas[Math.min(idx, planD.cargas.length - 1)] ?? null;
 
   if (!done.length) {
+    const sl = planD.salto;
+    const grande = !corporal && sl && sl.pct != null && sl.pct > p.limitePct + 1e-9 && planD.acao !== 'subir';
     return {
-      carga: corporal ? null : planD.cargas[Math.min(idx, planD.cargas.length - 1)] ?? null,
+      carga: corporal ? null : planejada,
       reps: meta(idx),
       motivo: planD.motivo,
       plan: planD,
       voltarPara: planD.acao === 'subir' ? planD.salto?.de : undefined,
+      opcao: grande ? { carga: sl.para, reps: p.repMin, texto: `Testar ${W(sl.para)} × ${p.repMin} (${saltoTexto(eq, sl.de, sl.para, sl.pct)})` } : undefined,
+      perguntarProximo: planD.acao === 'perguntar' ? planD.perguntarProximo : undefined,
+      sequencia: seq,
     };
   }
 
+  // Avalia a série anterior desta sessão: peso, repetições, reserva, ajuda, dor e descanso.
   const prev = done[done.length - 1];
-  const W = (w: number | null) => (w == null ? 'o mesmo peso' : `${fmtW(w)} ${u}`);
-  if (planD.acao === 'subir' && planD.salto && done.length === 1 && prev.carga === planD.salto.para && (prev.reps ?? 0) < presc.repMin) {
-    const de = planD.salto.de;
-    return {
-      carga: de,
-      reps: planD.ultima?.reps[Math.min(idx, planD.ultima.reps.length - 1)] ?? presc.repMin,
-      motivo: `A 1ª série com ${W(prev.carga)} ficou abaixo de ${presc.repMin}. Volte para ${W(de)}.`,
-      plan: planD,
-    };
-  }
-  if ((prev.reps ?? 0) < presc.repMin && prev.rir === 0) {
-    const lower = prev.carga != null ? easier(eq, prev.carga) : undefined;
-    return {
-      carga: corporal ? null : lower ?? prev.carga,
-      reps: presc.repMin,
-      motivo: `A série anterior ficou abaixo de ${presc.repMin} no limite. Confira o peso e o descanso.${lower != null ? ` Sugestão: ${W(lower)}.` : ''}`,
-      plan: planD,
-    };
-  }
-  const reps = meta(idx) ?? Math.max(presc.repMin, Math.min(prev.reps ?? presc.repMin, presc.repMax));
-  return {
-    carga: corporal ? null : prev.carga,
+  const r = rirOf(prev);
+  const reps0 = prev.reps ?? p.repMin;
+  const carga0 = corporal ? null : prev.carga;
+  const plano = seq ? planejada : carga0;
+  const faixa = `${p.repMin}–${p.repMax}`;
+  const esforco = `${p.rirMin} a ${p.rirMax}`;
+  const fez = `${carga0 != null ? `${W(carga0)} × ` : ''}${reps0}`;
+  const termo = isAssist(eq) ? 'nível de assistência' : 'peso';
+  const out = (carga: number | null, reps: number, motivo: string, extra: Partial<StepSuggestion> = {}): StepSuggestion => ({
+    carga: corporal ? null : carga,
     reps,
-    motivo: `Mantenha ${W(prev.carga)} e tente ${reps} repetições com a mesma amplitude.`,
+    motivo,
     plan: planD,
+    sequencia: seq && carga === planejada,
+    ...extra,
+  });
+  const naFaixa = (v: number) => clamp(v, p.repMin, p.repMax);
+
+  if (prev.dor) return out(plano, naFaixa(reps0), `Você marcou dor na série anterior. Mantenha ${W(plano)} sem progredir e pare se a dor aumentar.`);
+  if (prev.ajuda) {
+    const m = naFaixa(reps0);
+    return out(plano, m, `A série anterior teve ajuda. Mantenha ${W(plano)} e tente ${m} sem ajuda, contando só as repetições completas.`);
+  }
+  if (r.v == null) {
+    const m = (seq ? meta(idx) : null) ?? naFaixa(reps0);
+    return out(plano, m, `A reserva da série anterior não foi informada. Mantenha ${W(plano)} e tente ${m}.`);
+  }
+
+  const alvo = alvoRir(p);
+  const cap = reps0 + r.v;
+  const ideal = cap - alvo;
+  /** Repetições estimadas com outra carga deixando a reserva alvo, dentro da faixa. */
+  const repsAt = (w: number | null) => {
+    if (w == null || w === prev.carga || prev.carga == null) return naFaixa(ideal);
+    const c = capAt(eq, prev.carga, cap, w, ctx.pesoCorporal);
+    return c == null ? p.repMin : naFaixa(Math.floor(c - alvo));
   };
+  const curto = prev.intervaloSeg != null && prev.descansoPlanejadoSeg != null && prev.intervaloSeg < prev.descansoPlanejadoSeg * 0.8;
+  const descansoTxt = curto ? ` O descanso antes dela foi curto (${fmtDur(prev.intervaloSeg!)} de ${fmtDur(prev.descansoPlanejadoSeg!)}): descanse o tempo todo.` : '';
+
+  // Mais pesada que o planejado: nem o mínimo da faixa sai deixando a reserva mínima.
+  if (cap - p.rirMin < p.repMin) {
+    const pesada = `Com ${fez} ${comReserva(prev)}, a série ficou mais pesada que o planejado (${faixa} com ${esforco} de reserva).`;
+    if (curto) return out(carga0, p.repMin, `${pesada}${descansoTxt} Mantenha ${W(carga0)} mirando ${p.repMin}.`);
+    if (corporal || prev.carga == null) return out(null, p.repMin, `${pesada} Tente ${p.repMin} e, se não sair, registre o que conseguir.`);
+    const leves = done.map((s) => s.carga).filter((w): w is number => w != null && maisDificil(eq, prev.carga!, w));
+    let lower: number | undefined = leves.length ? (isAssist(eq) ? Math.min(...leves) : Math.max(...leves)) : undefined;
+    if (lower == null && planD.salto && prev.carga === planD.salto.para) lower = planD.salto.de;
+    if (lower == null) lower = easier(eq, prev.carga);
+    if (lower == null) return out(prev.carga, p.repMin, `${pesada} Diminua o ${termo} e mire ${p.repMin}.`);
+    const m = repsAt(lower);
+    return out(lower, m, `${pesada} Volte para ${W(lower)} e tente ${m}.`);
+  }
+
+  // Até a falha ou com menos reserva que o mínimo: ajusta as repetições dentro da faixa, nunca sobe.
+  if (r.v < p.rirMin) {
+    const m = repsAt(plano);
+    const intro = r.v === 0 ? `Você foi até a falha (${fez}).` : `Você deixou menos reserva que o planejado (${fez}, ${rirTexto(prev)}).`;
+    return out(plano, m, `${intro} Mantenha ${W(plano)} e pare em ${m}, deixando ${esforco} de reserva. Série até a falha não sobe o ${termo}.${descansoTxt}`);
+  }
+
+  // Leve demais: a folga passa do topo da faixa, ou já passou da faixa com reserva.
+  const leve = r.v > p.rirMax ? ideal > p.repMax : reps0 > p.repMax;
+  if (!leve) {
+    if (seq) {
+      const m = meta(idx) ?? naFaixa(reps0);
+      return out(planejada, m, `Você fez ${fez} ${comReserva(prev)}, dentro do esforço planejado. Siga a sequência: ${W(planejada)} × ${m}.`);
+    }
+    if (r.v <= p.rirMax) {
+      const dentro = `Você fez ${fez} ${comReserva(prev)}, dentro do esforço planejado (${esforco} de reserva).`;
+      if (reps0 >= p.repMax) {
+        return out(
+          carga0,
+          p.repMax,
+          `${dentro} Está no topo da faixa (${faixa}): mantenha ${W(carga0)} e repita ${p.repMax}. Quando todas as séries fecharem no topo com reserva, a próxima sessão sobe o ${termo}.`,
+        );
+      }
+      if (r.v > p.rirMin) {
+        const m = naFaixa(reps0 + 1);
+        return out(carga0, m, `${dentro} Mantenha ${W(carga0)} e tente ${m}: uma repetição a mais, ainda dentro da faixa ${faixa}.`);
+      }
+      const m = naFaixa(reps0);
+      return out(carga0, m, `${dentro} Mantenha ${W(carga0)} e repita ${m}.`);
+    }
+    const m = naFaixa(Math.max(ideal, reps0 + 1));
+    return out(
+      carga0,
+      m,
+      `Você relatou ${rirTexto(prev)} com ${fez}, mais folga que o planejado (${esforco} de reserva). Mantenha ${W(carga0)} e vá até ${m}${m === p.repMax ? ', o topo da faixa' : ''}, para chegar perto de ${alvo} de reserva.`,
+    );
+  }
+
+  const intro = r.v > p.rirMax ? `Você relatou bastante folga (${rirTexto(prev)} com ${fez}).` : `Você passou do topo da faixa (${fez}, faixa ${faixa}) ${comReserva(prev)}.`;
+  const manter = `mantenha ${W(carga0)} e vá até ${p.repMax}, o topo da faixa`;
+  if (corporal || carga0 == null) {
+    return out(null, p.repMax, `${intro} Sem ${termo} para aumentar aqui: vá até ${p.repMax}, o topo da faixa. Se continuar sobrando muito, fale com o personal sobre uma variação mais difícil.`);
+  }
+  const sub = proximaCarga(ctx, carga0, cap);
+  if (sub.tipo === 'perguntar') {
+    return out(
+      carga0,
+      p.repMax,
+      `${intro} Para sugerir o próximo ${termo}, informe abaixo o próximo ${isAssist(eq) ? `nível com menos assistência que ${W(carga0)}` : `peso disponível acima de ${W(carga0)}`}. Se preferir não subir agora, ${manter}.`,
+      { perguntarProximo: carga0 },
+    );
+  }
+  if (sub.tipo === 'limite') return out(carga0, p.repMax, `${intro} ${W(carga0)} é o limite deste aparelho: ${manter}.`);
+  const nx = sub.para!;
+  const salto = saltoTexto(eq, carga0, nx, sub.pct);
+  const pesadaDemais = sub.est != null && sub.est < p.repMin;
+  if (sub.tipo === 'subir' && !pesadaDemais) {
+    return out(nx, p.repMin, `${intro} Vamos testar o próximo ${termo} disponível, ${W(nx)} (${salto}), começando pelo limite inferior da faixa: ${p.repMin} repetições.`, {
+      voltarPara: carga0,
+    });
+  }
+  const porque = pesadaDemais
+    ? `parece pesado demais para ${p.repMin} repetições`
+    : sub.pct == null
+      ? 'preencha seu peso no perfil para o app medir esse salto'
+      : `passa do limite automático de ${fmtPct(p.limitePct)}`;
+  return out(
+    carga0,
+    p.repMax,
+    `${intro} O próximo ${termo} disponível, ${W(nx)}, é um salto de ${salto}: ${porque}, então o app não sobe sozinho. Escolha: ${manter}, ou teste ${W(nx)} no botão abaixo. Se o aparelho tiver um ${termo} intermediário, digite-o.`,
+    { opcao: { carga: nx, reps: p.repMin, texto: `Testar ${W(nx)} × ${p.repMin} (${salto})` } },
+  );
 }
 
 // ===================== duração =====================
@@ -610,7 +965,9 @@ export function medianDuration(data: AppData, key: string): number | null {
 
 /** Vaga que pode sair primeiro para caber no tempo. */
 export function dropCandidate(ps: PlanSession, session: Session | undefined): PlanSlot | undefined {
-  const ativos = ps.slots.filter((s) => !session || slotActive(session, s.id));
+  // Exercício acrescentado por ele hoje não é sugerido para sair.
+  const extras = new Set((session?.extras ?? []).map((x) => x.id));
+  const ativos = ps.slots.filter((s) => !extras.has(s.id) && (!session || slotActive(session, s.id)));
   return ativos.find((s) => s.sairPrimeiro) ?? [...ativos].reverse().find((s) => s.prioridade === 3);
 }
 
@@ -690,4 +1047,36 @@ export function swapCandidates(ps: PlanSession, session: Session, slotId: string
   };
   const cabe = lista.filter(fits);
   return [...cabe, ...lista.filter((id) => !cabe.includes(id))];
+}
+
+// ===================== exercício extra =====================
+
+/**
+ * Exercícios que podem entrar só nesta sessão: do catálogo ativo, com músculo principal entre os
+ * trabalhados hoje (principais primeiro, na ordem da ficha) e que ainda não estão no treino.
+ */
+export function extraCandidates(ps: PlanSession, session: Session, t: TrainingSettings): string[] {
+  const principais: Grupo[] = [];
+  const secundarios: Grupo[] = [];
+  const usados = new Set<string>();
+  for (const slot of ps.slots) {
+    usados.add(slot.exerciseId);
+    for (const seg of slotSegments(slot, session.slots[slot.id], t)) {
+      usados.add(seg.exerciseId);
+      const e = getEx(seg.exerciseId);
+      if (!principais.includes(e.grupo)) principais.push(e.grupo);
+      e.secundarios.forEach((g) => !secundarios.includes(g) && secundarios.push(g));
+    }
+  }
+  const grupos = [...principais, ...secundarios.filter((g) => !principais.includes(g))];
+  return CATALOG.filter((e) => isActive(e.id, t) && grupos.includes(e.grupo) && !usados.has(e.id))
+    .sort((a, b) => grupos.indexOf(a.grupo) - grupos.indexOf(b.grupo) || Number(b.composto) - Number(a.composto))
+    .map((e) => e.id);
+}
+
+/** Prescrição padrão do exercício extra: composto 3 × 8–12 (2 min); isolado 2 × 10–15 (75 s). */
+export function extraSlot(id: string, exerciseId: string): PlanSlot {
+  const e = getEx(exerciseId);
+  const base = { id, exerciseId, rirMin: 1, rirMax: 3, prioridade: 3 as const, dica: e.dica ?? '' };
+  return e.composto ? { ...base, series: 3, repMin: 8, repMax: 12, descansoSeg: 120 } : { ...base, series: 2, repMin: 10, repMax: 15, descansoSeg: 75 };
 }

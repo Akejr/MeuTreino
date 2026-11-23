@@ -1,6 +1,8 @@
 /** Peças da análise: lista de falhas com nível, qualidade da dieta e listas de pendências/acertos. */
 import { NIVEL_LABEL, type FullTotals, type Issue, type Targets } from '../lib/nutrition';
+import { useLocalFlag } from '../lib/hooks';
 import { fmtNum, r0 } from '../lib/utils';
+import { IconDown } from './Icons';
 import { RichInline } from './RichText';
 
 const AREA: Record<Issue['area'], string> = { dieta: 'Dieta', treino: 'Treino', habitos: 'Hábitos' };
@@ -62,8 +64,12 @@ export function TextList({ items, kind }: { items: string[]; kind: 'pendente' | 
 
 const fmt1 = (n: number) => fmtNum(Math.round(n * 10) / 10, 1);
 
-/** Fibras (mínimo), açúcar adicionado, saturada e sódio (máximos) e % de ultraprocessados. */
-export function QualityCard({ t, T, title = 'Qualidade do dia' }: { t: FullTotals; T: Targets; title?: string }) {
+/**
+ * Fibras (mínimo), açúcar adicionado, saturada e sódio (máximos) e % de ultraprocessados.
+ * A seta minimiza e maximiza; o estado fica guardado (`memo`) até ele abrir de novo.
+ */
+export function QualityCard({ t, T, title = 'Qualidade do dia', memo = 'qualidade-dia' }: { t: FullTotals; T: Targets; title?: string; memo?: string }) {
+  const [fechado, setFechado] = useLocalFlag(memo);
   const rows = [
     { label: 'Fibras', v: t.fibras, lim: T.fibra, unit: 'g', min: true, cob: t.cobertura.fibras, f: fmt1 },
     { label: 'Açúcar adicionado', v: t.acucar, lim: T.acucar, unit: 'g', min: false, cob: t.cobertura.acucar, f: fmt1 },
@@ -72,9 +78,16 @@ export function QualityCard({ t, T, title = 'Qualidade do dia' }: { t: FullTotal
   ];
   const ultra = t.novaKcal > 0 ? Math.round((t.ultraKcal / t.novaKcal) * 100) : null;
   const semDado = rows.some((r) => t.itens > 0 && r.cob < 1);
+  const alertas = rows.filter((r) => (r.min ? t.itens > 0 && r.v < r.lim : r.v > r.lim * 1.01)).length;
   return (
-    <section className="card quality">
-      <div className="label">{title}</div>
+    <section className={`card quality ${fechado ? 'closed' : ''}`}>
+      <button className="q-toggle" aria-expanded={!fechado} onClick={() => setFechado(!fechado)}>
+        <span className="label grow">{title}</span>
+        {fechado && alertas > 0 && <span className="q-count">{alertas === 1 ? '1 fora da meta' : `${alertas} fora da meta`}</span>}
+        <IconDown className={`chev ${fechado ? '' : 'up'}`} />
+      </button>
+      {!fechado && (
+        <>
       <div className="q-rows">
         {rows.map((r) => {
           const pct = r.lim ? Math.min(100, (r.v / r.lim) * 100) : 0;
@@ -98,7 +111,9 @@ export function QualityCard({ t, T, title = 'Qualidade do dia' }: { t: FullTotal
         <span>Ultraprocessados</span>
         <strong>{ultra == null ? '—' : `${ultra}% das kcal`}</strong>
       </div>
-      {semDado && <p className="muted small">Alguns itens não têm todos os dados (registros antigos ou cadastros sem esses campos).</p>}
+      {semDado && <p className="muted small">Alguns itens ainda não têm todos os dados. Com internet, o app estima os que faltam.</p>}
+        </>
+      )}
     </section>
   );
 }

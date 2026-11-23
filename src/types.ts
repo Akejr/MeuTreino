@@ -113,6 +113,8 @@ export interface Meal extends Synced {
   criadoEm: number;
   /** Sugestões da IA quando a refeição foi calculada. */
   dicas?: string[];
+  /** Quando a IA completou fibras, açúcar, saturada, sódio e NOVA que faltavam (não tenta de novo). */
+  qualidadeEstimada?: number;
 }
 
 export interface ChatMsg {
@@ -268,6 +270,8 @@ export interface Session extends Synced {
   historicoDatas: MudancaData[];
   /** Como estavam aparelhos e catálogo ao começar (para 'encerrar e perder progresso'). */
   antes?: { equipment: Record<string, Equipment>; respostas: Record<string, string[]>; naoGosto: string[] };
+  /** Exercícios acrescentados só nesta sessão (não mudam a ficha nem outros dias). */
+  extras?: PlanSlot[];
   /** Só na tela: sessão prevista pela ficha numa semana que ainda não foi criada. */
   virtual?: boolean;
 }
@@ -292,6 +296,12 @@ export interface SetLog extends Synced {
   reps: number | null;
   /** Repetições em reserva. null = "não sei" (ou não perguntado no aquecimento). */
   rir: number | null;
+  /** A reserva é aproximada (o usuário marcou 4+ e escolheu quanto). */
+  rirAprox?: boolean;
+  /** A reserva é um mínimo: "4+" sem saber quanto (ou "10+"). */
+  rirMais?: boolean;
+  /** Carga mudou em relação à série anterior desta sessão para achar o peso certo. */
+  ajuste?: 'calibracao';
   ajuda: boolean;
   dor: boolean;
   dorTipo?: 'leve' | 'aguda' | 'alerta';

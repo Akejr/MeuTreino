@@ -15,8 +15,11 @@ export function activePlan(d: AppData): PlanVersion | undefined {
 
 export const sessionIdFor = (week: string, key: string) => `s-${week}-${key}`;
 
+/** Sessão da ficha, com os exercícios acrescentados só neste dia. */
 export function planSessionOf(d: AppData, s: Session): PlanSession | undefined {
-  return d.plans[s.planId]?.sessoes.find((x) => x.key === s.key);
+  const ps = d.plans[s.planId]?.sessoes.find((x) => x.key === s.key);
+  if (!ps || !s.extras?.length) return ps;
+  return { ...ps, slots: [...ps.slots, ...s.extras] };
 }
 
 const keyOrder = (k: string) => k.charCodeAt(0);

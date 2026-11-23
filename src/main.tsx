@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { initBackfill } from './lib/backfill';
 import { initStorage } from './lib/storage';
 import { initSync, onSynced } from './lib/sync';
 import { autoPauseStale, ensureTraining } from './training/actions';
@@ -16,6 +17,8 @@ initStorage().finally(() => {
   onSynced(() => ensureTraining());
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && autoPauseStale());
   initSync();
+  // Completa a qualidade de refeições antigas quando houver internet (também as que chegam pela sincronização).
+  onSynced(initBackfill());
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

@@ -7,6 +7,7 @@ import {
   exposures,
   planVolume,
   realizedVolume,
+  rirCurto,
   sessionSteps,
   stepCtx,
   suggestNext,
@@ -107,7 +108,7 @@ export function sessionContext(data: AppData, sessionId: string, hoje = todayISO
     .filter((x) => x.set)
     .map(
       ({ st, set }) =>
-        `- ${exNome(st.exerciseId)} · ${st.tipo} ${st.posicao}${st.lado ? ` lado ${st.lado}` : ''}: ${set!.status === 'pulada' ? 'pulada' : `${set!.carga ?? '-'} ${set!.unidade} × ${set!.reps ?? '-'} reps, reserva ${set!.rir ?? 'não sei'}${set!.ajuda ? ', com ajuda' : ''}${set!.dor ? `, DOR (${set!.dorTipo})` : ''}`}`,
+        `- ${exNome(st.exerciseId)} · ${st.tipo} ${st.posicao}${st.lado ? ` lado ${st.lado}` : ''}: ${set!.status === 'pulada' ? 'pulada' : `${set!.carga ?? '-'} ${set!.unidade} × ${set!.reps ?? '-'} reps, reserva ${rirCurto(set!)}${set!.ajuste ? ', peso ajustado na sessão' : ''}${set!.ajuda ? ', com ajuda' : ''}${set!.dor ? `, DOR (${set!.dorTipo})` : ''}`}`,
     );
   const pend = steps.filter((st) => !data.sets[st.id] && (s.slots[st.slotId]?.status ?? 'ativo') === 'ativo');
   return `SESSÃO EM ANDAMENTO: ${s.key} · ${s.titulo} (${s.status}), início ${s.inicio ? new Date(s.inicio).toLocaleTimeString('pt-BR') : '-'}
@@ -288,6 +289,39 @@ export function foodsText(foods: Food[]): string {
         `- id ${f.id} | ${f.nome}${f.apelidos ? ` (apelidos: ${f.apelidos})` : ''} | porção: ${f.porcao || `${f.porcaoQtd} ${f.porcaoUnidade}`} = ${f.porcaoQtd} ${f.porcaoUnidade} | ${f.calorias} kcal, P ${f.proteina} g, G ${f.gordura} g, C ${f.carboidratos} g${x('fibras', f.fibras, 'g')}${x('açúcar adicionado', f.acucar, 'g')}${x('saturada', f.saturada, 'g')}${x('sódio', f.sodio, 'mg')}${f.obs ? ` | obs: ${f.obs}` : ''}`,
     )
     .join('\n');
+}
+
+export const BACKFILL_SYSTEM = `Você é nutricionista. Estas refeições já foram registradas com calorias e macros conferidos. Estime SÓ os dados de qualidade de cada item, sem mudar calorias nem macros.
+- Referência: Tabela TACO; na falta, USDA FoodData Central; produto industrializado conhecido: o rótulo.
+- Item com alimento_id ou com nome igual a um alimento cadastrado: use os valores do cadastro, proporcionais à quantidade; o que o cadastro não tiver, estime pela TACO.
+- fibras, acucar_adicionado e gordura_saturada em gramas (1 casa decimal); sodio em mg (inteiro); nova = classificação NOVA (1 in natura ou minimamente processado, 2 ingrediente culinário como óleo, açúcar e sal, 3 processado, 4 ultraprocessado); suplemento = true para whey, caseína, albumina, creatina e similares.
+- Açúcar adicionado é só o colocado no preparo ou pelo fabricante; o açúcar natural da fruta e do leite não conta.
+- Seja coerente com o item: gordura saturada não passa da gordura total; açúcar adicionado e fibras não passam dos carboidratos.
+Responda APENAS com JSON válido: {"refeicoes": [{"id": "id da refeição", "itens": [{"id": "id do item", "fibras": 0, "acucar_adicionado": 0, "gordura_saturada": 0, "sodio": 0, "nova": 1, "suplemento": false}]}]}`;
+
+/** Refeições antigas sem os dados de qualidade: a IA completa só o que falta. */
+export function backfillMessages(data: AppData, meals: Meal[]): AIMessage[] {
+  const lista = meals.map((m) => ({
+    id: m.id,
+    refeicao: `${m.refeicao} ${m.date} ${m.hora}`,
+    itens: m.itens.map((i) => ({
+      id: i.id,
+      nome: i.nome,
+      quantidade: i.quantidade,
+      calorias: i.calorias,
+      proteina: i.proteina,
+      carboidratos: i.carboidratos,
+      gordura: i.gordura,
+      alimento_id: i.foodId ?? null,
+    })),
+  }));
+  return [
+    { role: 'system', content: BACKFILL_SYSTEM },
+    {
+      role: 'user',
+      content: `ALIMENTOS CADASTRADOS DO USUÁRIO (valores por porção)\n${foodsText(Object.values(data.foods))}\n\nREFEIÇÕES\n${JSON.stringify(lista)}`,
+    },
+  ];
 }
 
 export const LABEL_SYSTEM = `Você lê a foto da tabela nutricional de um rótulo brasileiro e extrai os valores POR PORÇÃO indicada no rótulo.

@@ -302,6 +302,13 @@ function NextCard({ data, s, hoje, onMove, onSkipToday, onEnd }: { data: AppData
   );
 }
 
+/** "50 kg × " ou, se o peso mudou entre as séries, "50/50/60 kg × ". */
+function ultimaCargas(cargas: (number | null)[], u: string): string {
+  if (cargas[0] == null) return '';
+  const iguais = cargas.every((c) => c === cargas[0]);
+  return `${iguais ? fmtW(cargas[0]) : cargas.map((c) => (c == null ? '?' : fmtW(c))).join('/')} ${u} × `;
+}
+
 function ExerciseList({ data, s, hoje }: { data: AppData; s: Session; hoje: string }) {
   const ps = planSessionOf(data, s)!;
   const t = data.settings.training;
@@ -329,7 +336,7 @@ function ExerciseList({ data, s, hoje }: { data: AppData; s: Session; hoje: stri
                     {slot.series}× {slot.repMin}–{slot.repMax}
                     {ex.unilateral ? ' por lado' : ''}
                     {!resolved ? ' · variação a confirmar' : ''}
-                    {p.ultima ? ` · última ${p.ultima.cargas[0] != null ? fmtW(p.ultima.cargas[0]!) + ' ' + u + ' × ' : ''}${p.ultima.reps.join('/')}` : ''}
+                    {p.ultima ? ` · última ${ultimaCargas(p.ultima.cargas, u)}${p.ultima.reps.join('/')}` : ''}
                   </div>
                 </div>
                 <div className="ex-meta-right">

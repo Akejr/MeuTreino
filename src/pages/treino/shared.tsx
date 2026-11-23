@@ -1,6 +1,6 @@
 import type { Equipment, PlanSlot, SetLog } from '../../types';
 import { BASE_LABEL, getEx } from '../../training/catalog';
-import { fmtW, type Step } from '../../training/engine';
+import { fmtW, rirCurto, type Step } from '../../training/engine';
 
 export function stepLabel(step: Step, slot: PlanSlot): string {
   if (step.tipo === 'aquecimento') return step.posicao > 1 ? 'Aquecimento extra · 8 repetições' : 'Aquecimento · 8 repetições';
@@ -19,9 +19,10 @@ export function loadUnit(eq?: Equipment): string {
 export function setLine(s: SetLog): string {
   if (s.status === 'pulada') return 'pulada';
   const carga = s.carga == null ? '' : `${fmtW(s.carga)} ${s.unidade} × `;
-  const rir = s.tipo === 'trabalho' ? ` · reserva ${s.rir == null ? 'não sei' : s.rir >= 4 ? '4+' : s.rir}` : '';
+  const rir = s.tipo === 'trabalho' ? ` · reserva ${rirCurto(s)}` : '';
+  const ajuste = s.ajuste === 'calibracao' ? ' · ajuste' : '';
   const flags = [s.ajuda && 'ajuda', s.dor && 'dor'].filter(Boolean).join(', ');
-  return `${carga}${s.reps ?? '-'}${rir}${flags ? ` · ${flags}` : ''}`;
+  return `${carga}${s.reps ?? '-'}${rir}${flags ? ` · ${flags}` : ''}${ajuste}`;
 }
 
 export const tipoCurto = (s: SetLog) =>

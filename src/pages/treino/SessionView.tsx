@@ -9,23 +9,28 @@ import { fmtDur, todayISO } from '../../lib/utils';
 import type { AppData, PlanSession, Session, SetLog } from '../../types';
 import {
   acceptOffer,
+  addExtraSlot,
   addRest,
   addWarmup,
   confirmStep,
   dismissOffer,
   finishSession,
   pauseSession,
+  removeExtraSlot,
   setPainCheck,
   setSlotStatus,
   showNextAlternative,
   skipRest,
   skipStep,
 } from '../../training/actions';
-import { BY_ID, getEx } from '../../training/catalog';
+import Sheet from '../../components/Sheet';
+import { BY_ID, getEx, GRUPO_LABEL } from '../../training/catalog';
 import {
   dropCandidate,
   estimateSession,
   exposures,
+  extraCandidates,
+  extraSlot,
   fmtPct,
   fmtW,
   harder,
@@ -40,7 +45,20 @@ import {
   type Step,
 } from '../../training/engine';
 import { planSessionOf } from '../../training/schedule';
-import { EditSetSheet, EquipmentCard, NextWeightAsk, OfferCard, PainCheckCard, PainSheet, QuestionCard, RestCard, RIR_OPTS, Stepper } from './Cards';
+import {
+  EditSetSheet,
+  EquipmentCard,
+  NextWeightAsk,
+  OfferCard,
+  PainCheckCard,
+  PainSheet,
+  QuestionCard,
+  RestCard,
+  RIR_MAIS,
+  RIR_OPTS,
+  Stepper,
+  type RirPick,
+} from './Cards';
 import EndSheet from './EndSheet';
 import { exName, ladoLabel, loadUnit, setLine, stepLabel, tipoCurto } from './shared';
 
@@ -56,6 +74,7 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
   const now = useNow(1000, s?.status === 'em_andamento');
   const [editing, setEditing] = useState<SetLog | null>(null);
   const [endOpen, setEndOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   useAIContext(`sessao:${id}`, s ? `${s.key} · ${s.titulo}` : 'Treino', () => sessionContext(getData(), id), 1);
   const ativo = s?.status === 'em_andamento';
   // Mantém a sessão na tela depois de concluir/encerrar, para mostrar o resumo.
@@ -136,15 +155,7 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
         </div>
       )}
 
-      {resting && s.descansoAte && (
-        <RestCard
-          ate={s.descansoAte}
-          total={s.descansoSeg ?? 60}
-          proximo={step ? `${exName(step.exerciseId)} · ${stepLabel(step, ps.slots.find((x) => x.id === step.slotId)!)}` : undefined}
-          onAdd={() => addRest(id, 30)}
-          onSkip={() => skipRest(id)}
-        />
-      )}
+      {resting && s.descansoAte && <RestCard ate={s.descansoAte} total={s.descansoSeg ?? 60} onAdd={() => addRest(id, 30)} onSkip={() => skipRest(id)} />}
 
       {step && <CurrentStep key={step.id} s={s} ps={ps} step={step} data={data} hoje={hoje} />}
 
@@ -165,6 +176,11 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
       <SlotList s={s} ps={ps} data={data} current={step} onEdit={setEditing} />
 
       {s.status === 'em_andamento' && (
+        <button className="btn block outline mt12" onClick={() => setAddOpen(true)}>
+          <IconPlus /> Adicionar exercício
+        </button>
+      )}
+      {s.status === 'em_andamento' && (
         <button className="btn block outline mt12" onClick={() => setEndOpen(true)}>
           Encerrar treino
         </button>
@@ -176,6 +192,7 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
       )}
 
       <EndSheet data={data} s={s} open={endOpen} onClose={() => setEndOpen(false)} />
+      <AddExerciseSheet open={addOpen} s={s} ps={ps} data={data} onClose={() => setAddOpen(false)} />
 
       <EditSetSheet set={editing} onClose={() => setEditing(null)} />
     </div>
@@ -224,7 +241,9 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
   const [reps, setReps] = useState<number>(sug.reps ?? slot.repMin);
   const [ajuda, setAjuda] = useState(false);
   const [dor, setDor] = useState(false);
-  const [painFor, setPainFor] = useState<{ rir: number | null } | null>(null);
+  const [painFor, setPainFor] = useState<RirPick | null>(null);
+  /** Tocou em 4+: pergunta quantas sobraram, aproximadamente. */
+  const [mais, setMais] = useState(false);
   const lock = useRef(0);
 
   useEffect(() => {
@@ -236,27 +255,30 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
   const cargaOk = corporal || (cargaNum != null && !Number.isNaN(cargaNum) && cargaNum >= 0);
   const isWork = step.tipo === 'trabalho';
   const plan = sug.plan;
-  const feitosAqui = Object.values(data.sets).some((x) => x.sessionId === s.id && x.exerciseId === step.exerciseId && x.tipo === 'trabalho' && x.status === 'feita');
-  const perguntar = isWork && !feitosAqui && plan?.acao === 'perguntar' && plan.perguntarProximo != null;
+  const perguntar = isWork && sug.perguntarProximo != null;
   const candidatos = swapCandidates(ps, s, slot.id, data);
 
-  function confirm(rir: number | null, dorTipo?: SetLog['dorTipo']) {
+  function confirm(pick: RirPick, dorTipo?: SetLog['dorTipo']) {
     if (Date.now() < lock.current) return;
     if (!cargaOk) return;
     if (dor && !dorTipo) {
-      setPainFor({ rir });
+      setPainFor(pick);
       return;
     }
     lock.current = Date.now() + 800;
+    setMais(false);
     confirmStep(s.id, step, {
       carga: corporal ? null : cargaNum,
       reps,
-      rir: isWork ? rir : null,
+      rir: isWork ? pick.rir : null,
+      rirAprox: pick.aprox,
+      rirMais: pick.mais,
       ajuda,
       dor: !!dorTipo,
       dorTipo,
       cargaSugerida: sug.carga,
       metaReps: sug.reps,
+      sequencia: sug.sequencia,
     });
   }
 
@@ -269,21 +291,24 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
     setCarga(String(nx));
   }
 
-  const nxt = isWork && plan?.refCarga != null ? harder(eq, plan.refCarga) : undefined;
+  const primeira = isWork && !Object.values(data.sets).some((x) => x.sessionId === s.id && x.exerciseId === step.exerciseId && x.tipo === 'trabalho' && x.status === 'feita');
+  const nxt = primeira && plan?.refCarga != null ? harder(eq, plan.refCarga) : undefined;
 
   return (
     <section className="card step">
-      <div className="step-head">
-        {step.lado && <span className="tag">{ladoLabel(step.lado)}</span>}
-        {plan?.revisarFaixa && isWork && <span className="tag">Revisar faixa</span>}
-      </div>
+      {(step.lado || (plan?.revisarFaixa && isWork)) && (
+        <div className="step-head">
+          {step.lado && <span className="tag">{ladoLabel(step.lado)}</span>}
+          {plan?.revisarFaixa && isWork && <span className="tag">Revisar faixa</span>}
+        </div>
+      )}
       <h2 className="step-title">{ex.nome}</h2>
       <div className="step-sub">{stepLabel(step, slot)}</div>
 
       <p className="suggest">{sug.motivo}</p>
       {sug.dica && <p className="muted small">{sug.dica}</p>}
       {isWork && step.posicao === 1 && slot.dica && <p className="muted small">Execução: {slot.dica}</p>}
-      {isWork && plan?.salto && plan.acao !== 'subir' && nxt != null && (
+      {primeira && !sug.opcao && plan?.salto && plan.acao !== 'subir' && nxt != null && (
         <p className="muted small">
           Próximo degrau registrado: {fmtW(nxt)} {u}
           {plan.salto.pct != null ? ` (${eq?.base === 'assistencia' ? '' : '+'}${fmtPct(plan.salto.pct)})` : ''}.
@@ -291,7 +316,18 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
       )}
 
       {perguntar && eq && (
-        <NextWeightAsk equipId={ex.equip} de={plan!.perguntarProximo!} assist={eq.base === 'assistencia'} unidade={u} motivo="Para decidir o aumento, o app precisa saber o próximo peso real desta máquina." />
+        <NextWeightAsk equipId={ex.equip} de={sug.perguntarProximo!} assist={eq.base === 'assistencia'} unidade={u} motivo="Para decidir o aumento, o app precisa saber o próximo peso real desta máquina." />
+      )}
+      {sug.opcao && (
+        <button
+          className={`btn block small ${cargaNum === sug.opcao.carga ? 'primary' : 'outline'}`}
+          onClick={() => {
+            setCarga(String(sug.opcao!.carga));
+            setReps(sug.opcao!.reps);
+          }}
+        >
+          {sug.opcao.texto}
+        </button>
       )}
 
       <div className="inputs">
@@ -312,7 +348,7 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
           </div>
         )}
         <div className="field">
-          <span>Repetições{ex.unilateral ? ' (este lado)' : ''}</span>
+          <span>Repetições completas{ex.unilateral ? ' (este lado)' : ''}</span>
           <Stepper value={reps} onChange={setReps} min={0} max={50} />
         </div>
       </div>
@@ -322,7 +358,6 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
         </button>
       )}
       {!cargaOk && <p className="muted small">Informe o peso usado para registrar.</p>}
-      <p className="hint">Conte só as repetições completas.</p>
 
       <div className="chips">
         <button className={`chip ${ajuda ? 'on' : ''}`} onClick={() => setAjuda(!ajuda)}>
@@ -333,24 +368,48 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
         </button>
       </div>
 
-      {isWork ? (
+      {isWork && !mais && (
         <>
-          <div className="label mt12">Quantas repetições a mais você conseguiria?</div>
+          <div className="label mt8">Quantas repetições a mais você conseguiria?</div>
           <div className="rir">
             {RIR_OPTS.map((o) => (
-              <button key={o.label} className={o.v === null ? 'wide' : ''} disabled={!cargaOk} onClick={() => confirm(o.v)}>
+              <button
+                key={o.label}
+                className={o.v === null ? 'wide' : ''}
+                disabled={!cargaOk}
+                onClick={() => (o.abre ? setMais(true) : confirm({ rir: o.v }))}
+              >
                 {o.label}
               </button>
             ))}
           </div>
           <p className="hint">Tocar no número registra a série.</p>
         </>
-      ) : (
+      )}
+      {isWork && mais && (
+        <>
+          <div className="row between mt8">
+            <span className="label">4 ou mais: quantas, aproximadamente?</span>
+            <button className="link small" onClick={() => setMais(false)}>
+              Voltar
+            </button>
+          </div>
+          <div className="rir">
+            {RIR_MAIS.map((o) => (
+              <button key={o.label} className={o.label.length > 3 ? 'wide' : ''} disabled={!cargaOk} onClick={() => confirm({ rir: o.rir, aprox: o.aprox, mais: o.mais })}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="hint">Tocar registra a série.</p>
+        </>
+      )}
+      {!isWork && (
         <div className="row gap mt12">
           <button className="btn grow" onClick={() => skipStep(s.id, step)}>
             Pular
           </button>
-          <button className="btn primary grow2" disabled={!cargaOk} onClick={() => confirm(null)}>
+          <button className="btn primary grow2" disabled={!cargaOk} onClick={() => confirm({ rir: null })}>
             <IconCheck /> Registrar
           </button>
         </div>
@@ -374,12 +433,54 @@ function StepCard({ s, ps, step, data, hoje }: { s: Session; ps: PlanSession; st
         open={!!painFor}
         onClose={() => setPainFor(null)}
         onPick={(tipo) => {
-          const r = painFor?.rir ?? null;
+          const pick = painFor ?? { rir: null };
           setPainFor(null);
-          confirm(r, tipo);
+          confirm(pick, tipo);
         }}
       />
     </section>
+  );
+}
+
+/** Exercício extra só neste treino, escolhido entre os que trabalham os músculos de hoje. */
+function AddExerciseSheet({ open, s, ps, data, onClose }: { open: boolean; s: Session; ps: PlanSession; data: AppData; onClose: () => void }) {
+  if (!open) return null;
+  const ids = extraCandidates(ps, s, data.settings.training);
+  const grupos = [...new Set(ids.map((id) => getEx(id).grupo))];
+  return (
+    <Sheet open onClose={onClose} title="Adicionar exercício">
+      <p className="muted small">Entra no fim deste treino, só hoje: a ficha e os outros dias não mudam. As opções trabalham os músculos do treino de hoje.</p>
+      {!ids.length && <p className="small">Nenhum exercício relacionado disponível no catálogo.</p>}
+      {grupos.map((g) => (
+        <div key={g}>
+          <div className="label mt12">{GRUPO_LABEL[g]}</div>
+          <div className="stack">
+            {ids
+              .filter((id) => getEx(id).grupo === g)
+              .map((id) => {
+                const e = getEx(id);
+                const sl = extraSlot('', id);
+                return (
+                  <button
+                    key={id}
+                    className="option"
+                    onClick={() => {
+                      addExtraSlot(s.id, id);
+                      onClose();
+                    }}
+                  >
+                    <span className="option-title">{e.nome}</span>
+                    <span className="option-desc">
+                      {sl.series} × {sl.repMin}–{sl.repMax}
+                      {e.unilateral ? ' por lado' : ''} · descanso {fmtDur(sl.descansoSeg)}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      ))}
+    </Sheet>
   );
 }
 
@@ -441,16 +542,23 @@ function SlotList({ s, ps, data, current, onEdit }: { s: Session; ps: PlanSessio
           .sort((a, b) => a.confirmadoEm - b.confirmadoEm);
         const status = st?.status ?? 'ativo';
         const isCur = current?.slotId === slot.id;
+        const extra = !!s.extras?.some((x) => x.id === slot.id);
         return (
           <div key={slot.id} className={`slot ${isCur ? 'cur' : ''} ${status !== 'ativo' ? 'off' : ''} ${work.length && feitos === work.length ? 'done' : ''}`}>
             <div className="slot-head">
               <div className="grow">
                 <div className="slot-name">{segs.map((x) => exName(x.exerciseId)).join(' → ')}</div>
                 <div className="muted small">
+                  {extra ? 'Só hoje · ' : ''}
                   {slot.series}× {slot.repMin}–{slot.repMax}
                   {getEx(segs[segs.length - 1].exerciseId).unilateral ? ' por lado' : ''} · descanso {fmtDur(slot.descansoSeg)}
                   {status === 'pulado' ? ' · pulado' : status === 'dor' ? ' · interrompido por dor' : status === 'removido' ? ' · retirado por tempo' : ''}
                 </div>
+                {extra && !registros.length && s.status === 'em_andamento' && (
+                  <button className="link small" onClick={() => removeExtraSlot(s.id, slot.id)}>
+                    Remover
+                  </button>
+                )}
               </div>
               <span className="count">
                 {feitos}/{work.length}

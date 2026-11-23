@@ -210,6 +210,107 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
     <>
       <DateNav date={date} onChange={setDate} />
 
+      <section className="card add-card" id="draft">
+        <div className="row add-head">
+          <span className="tile">
+            <IconSparkle />
+          </span>
+          <div className="grow">
+            <h2>{draft?.editingMealId ? 'Editar refeição' : 'Adicionar refeição'}</h2>
+            <span className="muted small">A IA calcula com os seus alimentos cadastrados e avalia a refeição. Você confere e salva.</span>
+          </div>
+        </div>
+        {draft && draft.date !== date && <p className="notice">Este rascunho é de {dayLabel(draft.date)} ({draft.date}).</p>}
+        {!draft && (
+          <div className="row gap wrap">
+            {exemplos.map((s) => (
+              <button key={s} className="chip" disabled={loading} onClick={() => void enviar(s)}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        {!draft && !temAlimentos && (
+          <button className="notice action" onClick={onAlimentos}>
+            Cadastre seu whey, leite e iogurte em Meus alimentos para a IA usar a tabela certa.
+          </button>
+        )}
+
+        {draft && (
+          <div className="row gap">
+            <select value={draft.refeicao} onChange={(e) => setDraft((d) => (d ? { ...d, refeicao: e.target.value } : d))}>
+              {REFEICOES.map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </select>
+            <input type="time" value={draft.hora} onChange={(e) => setDraft((d) => (d ? { ...d, hora: e.target.value } : d))} className="time" />
+          </div>
+        )}
+
+        <ChatMessages messages={draft?.messages ?? []} loading={loading} />
+        {erro && <p className="error">{erro}</p>}
+
+        {draft && draft.itens.length > 0 && (
+          <div className="editor">
+            {draft.itens.map((i) => (
+              <div key={i.id} className="food">
+                <div className="row gap">
+                  <input className="grow" value={i.nome} placeholder="Alimento" onChange={(e) => updateItem(i.id, { nome: e.target.value })} />
+                  <button className="icon-btn" aria-label="Remover item" onClick={() => setDraft((d) => (d ? { ...d, itens: d.itens.filter((x) => x.id !== i.id) } : d))}>
+                    <IconTrash />
+                  </button>
+                </div>
+                <div className="row wrap tags-row">
+                  {i.foodId && data.foods[i.foodId] && <span className="tag solid">Seu cadastro: {data.foods[i.foodId].nome}</span>}
+                  {i.nova === 4 && !i.suplemento && <span className="tag">Ultraprocessado</span>}
+                  {i.suplemento && <span className="tag">Suplemento</span>}
+                </div>
+                <input value={i.quantidade} placeholder="Quantidade" onChange={(e) => updateItem(i.id, { quantidade: e.target.value })} />
+                <div className="grid4">
+                  <NumberField label="kcal" value={i.calorias} onChange={(n) => updateItem(i.id, { calorias: n })} />
+                  <NumberField label="Prot" value={i.proteina} onChange={(n) => updateItem(i.id, { proteina: n })} />
+                  <NumberField label="Gord" value={i.gordura} onChange={(n) => updateItem(i.id, { gordura: n })} />
+                  <NumberField label="Carb" value={i.carboidratos} onChange={(n) => updateItem(i.id, { carboidratos: n })} />
+                </div>
+                <div className="grid4 extra">
+                  <OptNumberField label="Fibra" value={i.fibras} onChange={(n) => updateItem(i.id, { fibras: n })} />
+                  <OptNumberField label="Açúcar ad." value={i.acucar} onChange={(n) => updateItem(i.id, { acucar: n })} />
+                  <OptNumberField label="Saturada" value={i.saturada} onChange={(n) => updateItem(i.id, { saturada: n })} />
+                  <OptNumberField label="Sódio mg" value={i.sodio} onChange={(n) => updateItem(i.id, { sodio: n })} />
+                </div>
+              </div>
+            ))}
+            {draftTotals && <MacroChips m={draftTotals} strong />}
+            <QualityCard t={fullTotals(draft.itens)} T={T} title="Qualidade desta refeição (o limite é do dia)" memo="qualidade-refeicao" />
+            {draftChecks.length > 0 && (
+              <div className="draft-analysis">
+                <div className="label">Análise desta refeição</div>
+                <IssueList issues={draftChecks} />
+              </div>
+            )}
+            <Dicas dicas={draft.dicas ?? []} />
+          </div>
+        )}
+
+        <ChatInput onSend={(t) => void enviar(t)} disabled={loading} placeholder={draft?.itens.length ? 'Corrija ou adicione algo… (ex.: "foram 3 ovos")' : 'O que você comeu?'} />
+
+        <div className="row gap wrap">
+          <button className="btn ghost" onClick={addItem}>
+            + Item manual
+          </button>
+          {draft && (
+            <button className="btn ghost danger" onClick={() => void descartar()}>
+              {draft.editingMealId ? 'Cancelar' : 'Descartar'}
+            </button>
+          )}
+        </div>
+        {draft && (
+          <button className="btn primary block" disabled={!draft.itens.length || loading} onClick={salvar}>
+            Salvar refeição
+          </button>
+        )}
+      </section>
+
       <KcalCard totals={totals} limits={limits} extra={draft?.date === date ? draftTotals : undefined} />
       <MacroGrid totals={totals} limits={limits} extra={draft?.date === date ? draftTotals : undefined} />
       {meals.length > 0 && <QualityCard t={analise.totals} T={T} />}
@@ -284,106 +385,6 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
         );
       })}
 
-      <section className="card add-card" id="draft">
-        <div className="row add-head">
-          <span className="tile">
-            <IconSparkle />
-          </span>
-          <div className="grow">
-            <h2>{draft?.editingMealId ? 'Editar refeição' : 'Adicionar refeição'}</h2>
-            <span className="muted small">A IA calcula com os seus alimentos cadastrados e avalia a refeição. Você confere e salva.</span>
-          </div>
-        </div>
-        {draft && draft.date !== date && <p className="notice">Este rascunho é de {dayLabel(draft.date)} ({draft.date}).</p>}
-        {!draft && (
-          <div className="row gap wrap">
-            {exemplos.map((s) => (
-              <button key={s} className="chip" disabled={loading} onClick={() => void enviar(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-        {!draft && !temAlimentos && (
-          <button className="notice action" onClick={onAlimentos}>
-            Cadastre seu whey, leite e iogurte em Meus alimentos para a IA usar a tabela certa.
-          </button>
-        )}
-
-        {draft && (
-          <div className="row gap">
-            <select value={draft.refeicao} onChange={(e) => setDraft((d) => (d ? { ...d, refeicao: e.target.value } : d))}>
-              {REFEICOES.map((r) => (
-                <option key={r}>{r}</option>
-              ))}
-            </select>
-            <input type="time" value={draft.hora} onChange={(e) => setDraft((d) => (d ? { ...d, hora: e.target.value } : d))} className="time" />
-          </div>
-        )}
-
-        <ChatMessages messages={draft?.messages ?? []} loading={loading} />
-        {erro && <p className="error">{erro}</p>}
-
-        {draft && draft.itens.length > 0 && (
-          <div className="editor">
-            {draft.itens.map((i) => (
-              <div key={i.id} className="food">
-                <div className="row gap">
-                  <input className="grow" value={i.nome} placeholder="Alimento" onChange={(e) => updateItem(i.id, { nome: e.target.value })} />
-                  <button className="icon-btn" aria-label="Remover item" onClick={() => setDraft((d) => (d ? { ...d, itens: d.itens.filter((x) => x.id !== i.id) } : d))}>
-                    <IconTrash />
-                  </button>
-                </div>
-                <div className="row wrap tags-row">
-                  {i.foodId && data.foods[i.foodId] && <span className="tag solid">Seu cadastro: {data.foods[i.foodId].nome}</span>}
-                  {i.nova === 4 && !i.suplemento && <span className="tag">Ultraprocessado</span>}
-                  {i.suplemento && <span className="tag">Suplemento</span>}
-                </div>
-                <input value={i.quantidade} placeholder="Quantidade" onChange={(e) => updateItem(i.id, { quantidade: e.target.value })} />
-                <div className="grid4">
-                  <NumberField label="kcal" value={i.calorias} onChange={(n) => updateItem(i.id, { calorias: n })} />
-                  <NumberField label="Prot" value={i.proteina} onChange={(n) => updateItem(i.id, { proteina: n })} />
-                  <NumberField label="Gord" value={i.gordura} onChange={(n) => updateItem(i.id, { gordura: n })} />
-                  <NumberField label="Carb" value={i.carboidratos} onChange={(n) => updateItem(i.id, { carboidratos: n })} />
-                </div>
-                <div className="grid4 extra">
-                  <OptNumberField label="Fibra" value={i.fibras} onChange={(n) => updateItem(i.id, { fibras: n })} />
-                  <OptNumberField label="Açúcar ad." value={i.acucar} onChange={(n) => updateItem(i.id, { acucar: n })} />
-                  <OptNumberField label="Saturada" value={i.saturada} onChange={(n) => updateItem(i.id, { saturada: n })} />
-                  <OptNumberField label="Sódio mg" value={i.sodio} onChange={(n) => updateItem(i.id, { sodio: n })} />
-                </div>
-              </div>
-            ))}
-            {draftTotals && <MacroChips m={draftTotals} strong />}
-            <QualityCard t={fullTotals(draft.itens)} T={T} title="Qualidade desta refeição (o limite é do dia)" />
-            {draftChecks.length > 0 && (
-              <div className="draft-analysis">
-                <div className="label">Análise desta refeição</div>
-                <IssueList issues={draftChecks} />
-              </div>
-            )}
-            <Dicas dicas={draft.dicas ?? []} />
-          </div>
-        )}
-
-        <ChatInput onSend={(t) => void enviar(t)} disabled={loading} placeholder={draft?.itens.length ? 'Corrija ou adicione algo… (ex.: "foram 3 ovos")' : 'O que você comeu?'} />
-
-        <div className="row gap wrap">
-          <button className="btn ghost" onClick={addItem}>
-            + Item manual
-          </button>
-          {draft && (
-            <button className="btn ghost danger" onClick={() => void descartar()}>
-              {draft.editingMealId ? 'Cancelar' : 'Descartar'}
-            </button>
-          )}
-        </div>
-        {draft && (
-          <button className="btn primary block" disabled={!draft.itens.length || loading} onClick={salvar}>
-            Salvar refeição
-          </button>
-        )}
-      </section>
     </>
   );
 }

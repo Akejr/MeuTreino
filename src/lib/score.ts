@@ -101,9 +101,12 @@ function trainingIssues(data: AppData, date: string, finished: boolean, out: { i
       continue;
     }
     const ps = planSessionOf(data, s);
-    const previstas = ps ? sessionSteps(ps, s, t).filter((x) => x.tipo === 'trabalho').length : trabalho.length;
+    // Exercício acrescentado por ele é opcional: não conta para "incompleto".
+    const extras = new Set((s.extras ?? []).map((x) => x.id));
+    const previstas = ps ? sessionSteps(ps, s, t).filter((x) => x.tipo === 'trabalho' && !extras.has(x.slotId)).length : trabalho.length;
+    const daFicha = trabalho.filter((x) => !extras.has(x.slotId)).length;
     if (!trabalho.length) add(2, `Treino **${s.key}** encerrado sem nenhuma série de trabalho.`);
-    else if (trabalho.length < previstas) add(1, `Treino **${s.key}** incompleto: **${trabalho.length} de ${previstas}** séries de trabalho.`);
+    else if (daFicha < previstas) add(1, `Treino **${s.key}** incompleto: **${daFicha} de ${previstas}** séries de trabalho.`);
     else out.acertos.push(`Treino ${s.key} completo (${trabalho.length} séries).`);
 
     const semEsforco = trabalho.filter((x) => x.rir == null).length;

@@ -252,18 +252,164 @@ describe('aceitação · página 14', () => {
     expect(p.cargas[0]).toBe(40);
   });
 
-  it('15 · aquecimento e aproximação não entram na progressão; posições comparadas por função', () => {
+  it('15 · aquecimento e aproximação não entram na progressão; sequência planejada é comparada por posição', () => {
     const ex = puxada.exerciseId;
-    const d = withSets(base(), [
-      { ...work(ex, 'o', '2026-11-16', 1, 20, 8, null), tipo: 'aquecimento' },
-      { ...work(ex, 'o', '2026-11-16', 1, 30, 4, null), tipo: 'aproximacao' },
-      work(ex, 'o', '2026-11-16', 1, 45, 8, 1),
-      work(ex, 'o', '2026-11-16', 2, 40, 9, 1),
-      work(ex, 'o', '2026-11-16', 3, 35, 9, 1),
-    ]);
-    const p = suggestNext(ex, undefined, ctxFor(d));
+    const sets = (sug: boolean) => [
+      { ...work(ex, 'o', '2026-11-16', 1, 20, 8, null), tipo: 'aquecimento' as const },
+      { ...work(ex, 'o', '2026-11-16', 1, 30, 4, null), tipo: 'aproximacao' as const },
+      work(ex, 'o', '2026-11-16', 1, 45, 8, 1, { cargaSugerida: sug ? 45 : null }),
+      work(ex, 'o', '2026-11-16', 2, 40, 9, 1, { cargaSugerida: sug ? 40 : null }),
+      work(ex, 'o', '2026-11-16', 3, 35, 9, 1, { cargaSugerida: sug ? 35 : null }),
+    ];
+    const p = suggestNext(ex, undefined, ctxFor(withSets(base(), sets(true))));
     expect(p.acao).toBe('posicao');
     expect(p.cargas).toEqual([45, 40, 35]);
+    // Os mesmos pesos escolhidos por conta própria = ajuste para achar a carga: vale o último.
+    const c = suggestNext(ex, undefined, ctxFor(withSets(base(), sets(false))));
+    expect(c.acao).toBe('validar');
+    expect(c.cargas).toEqual([35, 35, 35]);
+  });
+});
+
+// ---------- ajuste de carga dentro da sessão (relatos do treino real de 23/11) ----------
+
+const scott = slotOf('A', 3); // rosca_scott_maquina 3 × 8–12
+
+/** Sessão de hoje com as séries já feitas; devolve a sugestão da próxima série de trabalho. */
+function nextInSession(slot: typeof puxada, feitas: [number, number, number | null, Partial<SetLog>?][], equipment: Record<string, Equipment> = {}) {
+  const ex = slot.exerciseId;
+  const s = sessionFor('A');
+  const d = withSets(
+    base(),
+    feitas.map(([carga, reps, rir, extra], i) => work(ex, s.id, HOJE, i + 1, carga, reps, rir, extra ?? {})),
+  );
+  d.equipment = equipment;
+  const steps = sessionSteps(ses('A'), s, d.settings.training).filter((x) => x.tipo === 'trabalho' && x.exerciseId === ex);
+  return suggestForStep(steps[feitas.length], s, slot, d, HOJE);
+}
+
+describe('ajuste de carga dentro da sessão', () => {
+  it('puxada 50 kg × 8 com 3 de reserva: mantém o peso e propõe uma repetição a mais', () => {
+    const sug = nextInSession(puxada, [[50, 8, 3]]);
+    expect(sug.carga).toBe(50);
+    expect(sug.reps).toBe(9);
+    expect(sug.motivo).toContain('uma repetição a mais');
+    expect(sug.motivo).toContain('3 repetições de reserva');
+  });
+
+  it('no topo da faixa com reserva dentro do planejado: mantém e explica que a próxima sessão sobe', () => {
+    const sug = nextInSession(puxada, [[50, 9, 3]], { puxada_alta: eq('puxada_alta', { proximo: { '50': 55 } }) });
+    expect(sug.carga).toBe(50);
+    expect(sug.reps).toBe(9);
+    expect(sug.motivo).toContain('próxima sessão sobe');
+  });
+
+  it('folga acima do planejado e salto dentro de 10%: testa o próximo peso no limite inferior da faixa', () => {
+    const sug = nextInSession(puxada, [[50, 8, 6, { rirAprox: true }]], { puxada_alta: eq('puxada_alta', { proximo: { '50': 55 } }) });
+    expect(sug.carga).toBe(55);
+    expect(sug.reps).toBe(7);
+    expect(sug.voltarPara).toBe(50);
+    expect(sug.motivo).toContain('cerca de 6 repetições de reserva');
+    expect(sug.motivo).toContain('começando pelo limite inferior da faixa');
+  });
+
+  it('depois de subir: série pesada demais volta ao peso anterior; até a falha nunca sobe de novo', () => {
+    const pesada = nextInSession(puxada, [[50, 8, 6, { rirAprox: true }], [55, 6, 0]], { puxada_alta: eq('puxada_alta', { proximo: { '50': 55, '55': 57.5 } }) });
+    expect(pesada.carga).toBe(50);
+    expect(pesada.motivo).toContain('Volte para 50 kg');
+
+    const falha = nextInSession(puxada, [[50, 8, 3], [60, 9, 0]], { puxada_alta: eq('puxada_alta', { proximo: { '60': 62.5 } }) });
+    expect(falha.carga).toBe(60);
+    expect(falha.reps).toBe(7);
+    expect(falha.motivo).toContain('até a falha');
+    expect(falha.motivo).toContain('não sobe');
+
+    const muitas = nextInSession(puxada, [[50, 8, 3], [60, 14, 0]], { puxada_alta: eq('puxada_alta', { proximo: { '60': 62.5 } }) });
+    expect(muitas.carga).toBe(60);
+    expect(muitas.reps).toBe(9);
+  });
+
+  it('remada: 4+ com cerca de 8 sobrando e próximo peso desconhecido pergunta, sem converter em 4', () => {
+    const sug = nextInSession(remada, [[52, 9, 3], [52, 9, 8, { rirAprox: true }]]);
+    expect(sug.carga).toBe(52);
+    expect(sug.reps).toBe(12);
+    expect(sug.perguntarProximo).toBe(52);
+
+    const sobe = nextInSession(remada, [[52, 9, 8, { rirAprox: true }]], { remada_apoio_peito: eq('remada_apoio_peito', { proximo: { '52': 56.5 } }) });
+    expect(sobe.carga).toBe(56.5);
+    expect(sobe.reps).toBe(8);
+
+    // "4+, não sei quantas": é um mínimo; dentro da faixa ainda cabem mais repetições.
+    const minimo = nextInSession(remada, [[52, 9, 4, { rirMais: true }]]);
+    expect(minimo.carga).toBe(52);
+    expect(minimo.reps).toBe(11);
+    expect(minimo.motivo).toContain('4 ou mais');
+    // registro antigo com 4 (botão 4+) também conta como "4 ou mais"
+    expect(nextInSession(remada, [[52, 9, 4]]).reps).toBe(11);
+  });
+
+  it('rosca Scott 36 kg × 10 com várias sobrando: salto de 19% não é aplicado sozinho, vira opção', () => {
+    const sug = nextInSession(scott, [[36, 10, 8, { rirAprox: true }]], { rosca_scott: eq('rosca_scott', { proximo: { '36': 43 } }) });
+    expect(sug.carga).toBe(36);
+    expect(sug.reps).toBe(12);
+    expect(sug.opcao).toEqual({ carga: 43, reps: 8, texto: 'Testar 43 kg × 8 (+7 kg, +19,44%)' });
+    expect(sug.motivo).toContain('não sobe sozinho');
+    expect(sug.motivo).toContain('10%');
+  });
+
+  it('toda recomendação diz o que fazer e por quê', () => {
+    const casos = [
+      nextInSession(puxada, [[50, 8, 3]]),
+      nextInSession(puxada, [[50, 8, 1]]),
+      nextInSession(puxada, [[50, 8, null]]),
+      nextInSession(puxada, [[50, 8, 2, { ajuda: true }]]),
+      nextInSession(puxada, [[50, 5, 0]], { puxada_alta: eq('puxada_alta', { conhecidos: [45, 50] }) }),
+      nextInSession(scott, [[36, 10, 10, { rirMais: true }]], { rosca_scott: eq('rosca_scott', { proximo: { '36': -1 } }) }),
+    ];
+    for (const c of casos) {
+      expect(c.motivo).toMatch(/Mantenha|Volte|teste|testar|vá até|Diminua/i);
+      expect(c.motivo.length).toBeGreaterThan(40);
+    }
+    expect(casos[4].carga).toBe(45);
+  });
+});
+
+describe('próxima sessão depois de ajustar o peso', () => {
+  // Registros reais: o peso mudou por conta própria (diferente do sugerido) para achar a carga.
+  const real = (slot: typeof puxada, sets: [number, number, number, number | null][]) =>
+    withSets(
+      base(),
+      sets.map(([carga, reps, rir, sug], i) => work(slot.exerciseId, 'real', '2026-11-23', i + 1, carga, reps, rir, { cargaSugerida: sug })),
+    );
+
+  it('puxada 50/50/60 × 8/8/9: começa com 60 kg e valida na 1ª série', () => {
+    const p = suggestNext(puxada.exerciseId, undefined, ctxFor(real(puxada, [[50, 8, 3, null], [50, 8, 3, 50], [60, 9, 0, 50]])));
+    expect(p.acao).toBe('validar');
+    expect(p.cargas).toEqual([60, 60, 60]);
+    expect(p.metas).toEqual([7, 7, 7]);
+    expect(p.motivo).toContain('confirme na 1ª série');
+  });
+
+  it('remada 52/52/61 × 9/9/12 e Scott 36/43/43 × 10: parte do último peso válido', () => {
+    const r = suggestNext(remada.exerciseId, undefined, ctxFor(real(remada, [[52, 9, 3, null], [52, 9, 4, 52], [61, 12, 0, 52]]), remada));
+    expect(r.cargas).toEqual([61, 61, 61]);
+    expect(r.metas[0]).toBe(10);
+    const s = suggestNext(scott.exerciseId, undefined, ctxFor(real(scott, [[36, 10, 4, null], [43, 10, 3, 36], [43, 10, 0, 43]]), scott));
+    expect(s.acao).toBe('validar');
+    expect(s.cargas).toEqual([43, 43, 43]);
+    expect(s.metas[0]).toBe(11);
+  });
+
+  it('mesmo peso em todas as séries com bastante folga: sobe na próxima sessão', () => {
+    const ex = scott.exerciseId;
+    const sets = [1, 2, 3].map((p) => work(ex, 'o', '2026-11-23', p, 36, 10, 8, { rirAprox: true }));
+    const d = withSets(base(), sets);
+    expect(suggestNext(ex, undefined, ctxFor(d, scott)).acao).toBe('perguntar');
+    d.equipment = { rosca_scott: eq('rosca_scott', { proximo: { '36': 38.5 } }) };
+    const p = suggestNext(ex, undefined, ctxFor(d, scott));
+    expect(p.acao).toBe('subir');
+    expect(p.cargas[0]).toBe(38.5);
+    expect(p.metas[0]).toBe(8);
   });
 });
 

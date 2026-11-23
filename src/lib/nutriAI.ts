@@ -59,6 +59,22 @@ export function normalizeNutriItems(raw: unknown, foods: Record<string, Food>): 
   });
 }
 
+export type Quality = Pick<FoodItem, 'fibras' | 'acucar' | 'saturada' | 'sodio' | 'nova' | 'suplemento'>;
+
+/** Dados de qualidade de um item vindos da IA, coerentes com os macros do item (undefined = não veio). */
+export function normalizeQuality(i: NutriAIItem, item: Pick<FoodItem, 'gordura' | 'carboidratos'>): Quality {
+  const nova = Number(i.nova);
+  const cap = (v: number | undefined, max: number) => (v == null ? v : Math.min(v, r1(Math.max(0, max))));
+  return {
+    fibras: cap(opt(i.fibras), item.carboidratos),
+    acucar: cap(opt(i.acucar_adicionado), item.carboidratos),
+    saturada: cap(opt(i.gordura_saturada), item.gordura),
+    sodio: opt(i.sodio, 0),
+    nova: [1, 2, 3, 4].includes(nova) ? (nova as Nova) : undefined,
+    suplemento: i.suplemento === true ? true : undefined,
+  };
+}
+
 export function normalizeDicas(raw: unknown): string[] {
   return (Array.isArray(raw) ? raw : [])
     .map((x) => String(x ?? '').trim())

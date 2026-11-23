@@ -196,7 +196,8 @@ export function OfferCard({
   );
 }
 
-export function RestCard({ ate, total, proximo, onAdd, onSkip }: { ate: number; total: number; proximo?: string; onAdd: () => void; onSkip: () => void }) {
+/** Barra fina de descanso: fica presa no topo e deixa o cartão da série visível sem rolar. */
+export function RestCard({ ate, total, onAdd, onSkip }: { ate: number; total: number; onAdd: () => void; onSkip: () => void }) {
   const now = useNow(250);
   const rest = Math.max(0, (ate - now) / 1000);
   const pct = total > 0 ? Math.min(1, 1 - rest / total) : 1;
@@ -208,22 +209,20 @@ export function RestCard({ ate, total, proximo, onAdd, onSkip }: { ate: number; 
     }
   }, [rest]);
   return (
-    <section className="card hero rest">
-      <span className="hero-label">
-        <IconTimer className="i14" /> Descanso
-      </span>
-      <div className="rest-time">{fmtDur(rest)}</div>
-      <div className="progress">
-        <div style={{ width: `${pct * 100}%` }} />
-      </div>
-      {proximo && <p className="hero-sub mt8">Próximo: {proximo}</p>}
-      <div className="row gap mt12">
-        <button className="btn ghost-light grow" onClick={onAdd}>
+    <section className="rest-bar" aria-label="Descanso">
+      <div className="rest-bar-row">
+        <IconTimer className="i18" />
+        <span className="rest-bar-label">Descanso</span>
+        <span className="rest-bar-time">{fmtDur(rest)}</span>
+        <button className="rest-bar-btn" onClick={onAdd}>
           +30 s
         </button>
-        <button className="btn light grow" onClick={onSkip}>
-          Pular descanso
+        <button className="rest-bar-btn light" onClick={onSkip}>
+          Pular
         </button>
+      </div>
+      <div className="rest-bar-progress">
+        <div style={{ width: `${pct * 100}%` }} />
       </div>
     </section>
   );
@@ -250,33 +249,76 @@ export function PainSheet({ open, onClose, onPick }: { open: boolean; onClose: (
   );
 }
 
-const RIR_OPTS: { v: number | null; label: string }[] = [
+/** Reserva escolhida. aprox = número aproximado (depois de 4+); mais = só se sabe o mínimo. */
+export interface RirPick {
+  rir: number | null;
+  aprox?: boolean;
+  mais?: boolean;
+}
+
+/** Primeira linha: tocar registra a série. "4+" abre RIR_MAIS (nunca vira exatamente 4). */
+const RIR_OPTS: { v: number | null; label: string; abre?: boolean }[] = [
   { v: 0, label: '0' },
   { v: 1, label: '1' },
   { v: 2, label: '2' },
   { v: 3, label: '3' },
-  { v: 4, label: '4+' },
+  { v: 4, label: '4+', abre: true },
   { v: null, label: 'Não sei' },
 ];
+
+export const RIR_MAIS: (RirPick & { label: string })[] = [
+  { rir: 4, aprox: true, label: '4' },
+  { rir: 5, aprox: true, label: '5' },
+  { rir: 6, aprox: true, label: '6' },
+  { rir: 8, aprox: true, label: '8' },
+  { rir: 10, mais: true, label: '10+' },
+  { rir: 4, mais: true, label: 'Não sei quantas' },
+];
+
+const EDIT_RIR: (RirPick & { label: string })[] = [
+  { rir: 0, label: '0' },
+  { rir: 1, label: '1' },
+  { rir: 2, label: '2' },
+  { rir: 3, label: '3' },
+  { rir: 4, aprox: true, label: '≈4' },
+  { rir: 5, aprox: true, label: '≈5' },
+  { rir: 6, aprox: true, label: '≈6' },
+  { rir: 8, aprox: true, label: '≈8' },
+  { rir: 10, mais: true, label: '10+' },
+  { rir: 4, mais: true, label: '4+ sem saber quanto' },
+  { rir: null, label: 'Não sei' },
+];
+
+const samePick = (a: RirPick, b: RirPick) => a.rir === b.rir && !!a.aprox === !!b.aprox && !!a.mais === !!b.mais;
 
 export function EditSetSheet({ set, onClose }: { set: SetLog | null; onClose: () => void }) {
   const [carga, setCarga] = useState('');
   const [reps, setReps] = useState(0);
-  const [rir, setRir] = useState<number | null>(null);
+  const [pick, setPick] = useState<RirPick>({ rir: null });
   const [ajuda, setAjuda] = useState(false);
   const [dor, setDor] = useState(false);
   useEffect(() => {
     if (!set) return;
     setCarga(set.carga == null ? '' : String(set.carga));
     setReps(set.reps ?? 0);
-    setRir(set.rir);
+    // Registros antigos com 4 vinham do botão 4+: contam como "4 ou mais".
+    setPick({ rir: set.rir, aprox: set.rirAprox, mais: set.rirMais || (set.rir === 4 && !set.rirAprox) });
     setAjuda(set.ajuda);
     setDor(set.dor);
   }, [set]);
   if (!set) return null;
   const save = () => {
     const c = carga.trim() === '' ? null : Number(carga.replace(',', '.'));
-    editSet(set.id, { carga: c != null && !Number.isNaN(c) ? c : null, reps, rir: set.tipo === 'trabalho' ? rir : null, ajuda, dor });
+    const work = set.tipo === 'trabalho';
+    editSet(set.id, {
+      carga: c != null && !Number.isNaN(c) ? c : null,
+      reps,
+      rir: work ? pick.rir : null,
+      rirAprox: work && pick.aprox,
+      rirMais: work && pick.mais,
+      ajuda,
+      dor,
+    });
     onClose();
   };
   return (
@@ -294,8 +336,8 @@ export function EditSetSheet({ set, onClose }: { set: SetLog | null; onClose: ()
         <>
           <div className="label">Repetições em reserva</div>
           <div className="chips">
-            {RIR_OPTS.map((o) => (
-              <button key={o.label} className={`chip ${rir === o.v ? 'on' : ''}`} onClick={() => setRir(o.v)}>
+            {EDIT_RIR.map((o) => (
+              <button key={o.label} className={`chip ${samePick(pick, o) ? 'on' : ''}`} onClick={() => setPick({ rir: o.rir, aprox: o.aprox, mais: o.mais })}>
                 {o.label}
               </button>
             ))}

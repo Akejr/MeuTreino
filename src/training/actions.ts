@@ -3,7 +3,7 @@ import { getData, setData } from '../lib/storage';
 import { addDays, todayISO, weekStart } from '../lib/utils';
 import type { AppData, Base, Equipment, MotivoTroca, PlanVersion, Session, SetLog, SlotState, Unidade } from '../types';
 import { getEx, resolveExercise } from './catalog';
-import { emptySlotState, nextWorkPosition, sessionSteps, slotSegments, swapCandidates, type Step } from './engine';
+import { emptySlotState, extraCandidates, extraSlot, nextWorkPosition, sessionSteps, slotSegments, swapCandidates, type Step } from './engine';
 import { INITIAL_PLAN_ID, initialPlan } from './initialPlan';
 import { activePlan, applyChanges, computeReschedule, ensureSessions, isPaused, moveSession, planSessionOf, type Change } from './schedule';
 
@@ -137,6 +137,12 @@ export interface ConfirmValues {
   dorTipo?: SetLog['dorTipo'];
   cargaSugerida: number | null;
   metaReps: number | null;
+  /** Reserva aproximada (escolhida depois de tocar em 4+). */
+  rirAprox?: boolean;
+  /** Reserva mínima: "4+, não sei quanto" ou "10+". */
+  rirMais?: boolean;
+  /** A carga sugerida seguia uma sequência planejada por posição. */
+  sequencia?: boolean;
 }
 
 /** Confirma uma série. Idempotente: confirmar a mesma série de novo atualiza o mesmo registro. */
@@ -157,6 +163,18 @@ export function confirmStep(sessionId: string, step: Step, v: ConfirmValues) {
     const intervaloSeg =
       existing?.intervaloSeg ?? (step.tipo === 'trabalho' && ultimo ? Math.max(0, Math.round((now - ultimo.confirmadoEm) / 1000) - 40) : undefined);
 
+    // Peso diferente da série de trabalho anterior (mesmo exercício e lado) = ajuste para achar a carga,
+    // a não ser que siga a sequência planejada por posição.
+    const isWork = step.tipo === 'trabalho';
+    const prevWork = isWork
+      ? anteriores
+          .filter((s) => s.tipo === 'trabalho' && s.exerciseId === step.exerciseId && s.lado === step.lado && s.posicao < step.posicao)
+          .sort((a, b) => b.posicao - a.posicao)[0]
+      : undefined;
+    const planejada = v.sequencia && v.carga === v.cargaSugerida;
+    const ajuste = prevWork && prevWork.carga != null && v.carga != null && prevWork.carga !== v.carga && !planejada ? ('calibracao' as const) : undefined;
+    const rir = isWork ? v.rir : null;
+
     const set: SetLog = {
       id: step.id,
       sessionId,
@@ -173,7 +191,10 @@ export function confirmStep(sessionId: string, step: Step, v: ConfirmValues) {
       cargaSugerida: v.cargaSugerida,
       carga: v.carga,
       reps: v.reps,
-      rir: step.tipo === 'trabalho' ? v.rir : null,
+      rir,
+      ...(rir != null && v.rirAprox ? { rirAprox: true } : {}),
+      ...(rir != null && v.rirMais ? { rirMais: true } : {}),
+      ...(ajuste ? { ajuste } : {}),
       ajuda: v.ajuda,
       dor: v.dor,
       dorTipo: v.dor ? v.dorTipo : undefined,
@@ -211,8 +232,19 @@ export function confirmStep(sessionId: string, step: Step, v: ConfirmValues) {
   });
 }
 
-export function editSet(id: string, patch: Partial<Pick<SetLog, 'carga' | 'reps' | 'rir' | 'ajuda' | 'dor'>>) {
-  setData((d) => (d.sets[id] ? { ...d, sets: { ...d.sets, [id]: { ...d.sets[id], ...patch } } } : d));
+export function editSet(id: string, patch: Partial<Pick<SetLog, 'carga' | 'reps' | 'rir' | 'rirAprox' | 'rirMais' | 'ajuda' | 'dor'>>) {
+  setData((d) => {
+    const cur = d.sets[id];
+    if (!cur) return d;
+    const { rirAprox: _a, rirMais: _m, ...rest } = { ...cur, ...patch };
+    const next: SetLog = { ...rest, ...(rest.rir != null && patch.rirAprox ? { rirAprox: true } : {}), ...(rest.rir != null && patch.rirMais ? { rirMais: true } : {}) };
+    // Sem informar de novo a reserva, mantém como estava.
+    if (!('rir' in patch)) {
+      if (cur.rirAprox) next.rirAprox = true;
+      if (cur.rirMais) next.rirMais = true;
+    }
+    return { ...d, sets: { ...d.sets, [id]: next } };
+  });
 }
 
 export function skipStep(sessionId: string, step: Step) {
@@ -259,6 +291,32 @@ export function addWarmup(sessionId: string, slotId: string) {
 
 export function setSlotStatus(sessionId: string, slotId: string, status: SlotState['status']) {
   setData((d) => patchSession(d, sessionId, (s) => patchSlot(s, slotId, (st) => ({ ...st, status, oferta: undefined }))));
+}
+
+/** Acrescenta um exercício só nesta sessão (vai para o fim). A ficha e os outros dias não mudam. */
+export function addExtraSlot(sessionId: string, exerciseId: string) {
+  setData((d) => {
+    const s = d.sessions[sessionId];
+    const ps = s && planSessionOf(d, s);
+    if (!s || !ps || s.status !== 'em_andamento') return d;
+    if (!extraCandidates(ps, s, d.settings.training).includes(exerciseId)) return d;
+    const ids = new Set(ps.slots.map((x) => x.id));
+    let k = 1;
+    while (ids.has(`X${k}`)) k++;
+    return patchSession(d, sessionId, (x) => ({ ...x, extras: [...(x.extras ?? []), extraSlot(`X${k}`, exerciseId)] }));
+  });
+}
+
+/** Tira um exercício acrescentado por engano (só enquanto não tem série registrada). */
+export function removeExtraSlot(sessionId: string, slotId: string) {
+  setData((d) => {
+    const s = d.sessions[sessionId];
+    if (!s?.extras?.some((x) => x.id === slotId)) return d;
+    if (Object.values(d.sets).some((x) => x.sessionId === sessionId && x.slotId === slotId)) return d;
+    const { [slotId]: _st, ...slots } = s.slots;
+    const extras = s.extras.filter((x) => x.id !== slotId);
+    return patchSession(d, sessionId, (x) => ({ ...x, slots, extras: extras.length ? extras : undefined }));
+  });
 }
 
 export function setPainCheck(sessionId: string, slotId: string, r: 'ok' | 'dor') {

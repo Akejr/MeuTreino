@@ -1273,31 +1273,38 @@ textarea {
   font-weight: 800;
   letter-spacing: -0.02em;
 }
+.card.step {
+  padding: 16px 16px 12px;
+}
 .step-head {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .step-title {
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 800;
   letter-spacing: -0.03em;
   margin: 0;
 }
 .step-sub {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   color: var(--text-2);
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .suggest {
-  margin: 14px 0 6px;
-  padding: 12px 14px;
+  margin: 10px 0 4px;
+  padding: 10px 12px;
   background: var(--surface-2);
   border-radius: 14px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 1.4;
+}
+.card.step .muted.small {
+  margin: 4px 0;
 }
 .inputs {
   display: grid;
@@ -1305,14 +1312,30 @@ textarea {
   gap: 10px;
   margin-top: 8px;
 }
+.card.step .field {
+  margin: 0;
+}
+.card.step .stepper,
+.card.step .weight,
+.card.step .stepper button,
+.card.step .weight button,
+.card.step .weight input {
+  height: 48px;
+}
+.card.step .chips {
+  margin: 8px 0 0;
+}
+.card.step .chip {
+  padding: 7px 12px;
+}
 .rir {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 6px;
 }
 .rir button {
-  height: 56px;
+  height: 50px;
   border-radius: 16px;
   border: 0;
   background: var(--ink);
@@ -1322,7 +1345,7 @@ textarea {
 }
 .rir button.wide {
   grid-column: 1 / -1;
-  height: 46px;
+  height: 40px;
   font-size: 15px;
   background: var(--surface-2);
   color: var(--text);
@@ -1336,9 +1359,9 @@ textarea {
 .step-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 18px;
-  margin-top: 14px;
-  padding-top: 8px;
+  gap: 0 18px;
+  margin-top: 8px;
+  padding-top: 4px;
   border-top: 1px solid var(--line);
 }
 .ask {
@@ -1347,16 +1370,66 @@ textarea {
   border: 1.5px solid var(--ink);
   border-radius: 16px;
 }
-.rest {
-  text-align: center;
+/* descanso: barra fina presa no topo, o cartão da série cabe na tela sem rolar */
+.rest-bar {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + 6px);
+  z-index: 20;
+  margin-bottom: 10px;
+  padding: 8px 8px 0 14px;
+  border-radius: 18px;
+  background: var(--ink);
+  color: #fff;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
-.rest-time {
-  font-size: 64px;
+.rest-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.rest-bar-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.6);
+  flex: 1;
+  min-width: 0;
+}
+.rest-bar-time {
+  font-size: 26px;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-  margin-top: 6px;
+  margin-right: 4px;
+}
+.rest-bar-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rest-bar-btn.light {
+  background: #fff;
+  color: var(--ink);
+  border-color: #fff;
+}
+.rest-bar-progress {
+  height: 3px;
+  margin: 0 -8px 0 -14px;
+  background: rgba(255, 255, 255, 0.15);
+}
+.rest-bar-progress > div {
+  height: 100%;
+  background: #fff;
+  transition: width 0.25s linear;
 }
 
 .slot-list {
@@ -2381,6 +2454,28 @@ details.advanced[open] > summary .chev {
 }
 
 /* ---------- qualidade da dieta ---------- */
+.q-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: -6px 0;
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: inherit;
+}
+.q-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--day-bad);
+  white-space: nowrap;
+}
+.quality.closed {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
 .quality .q-rows {
   display: flex;
   flex-direction: column;
