@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAIContext } from '../components/AIChat';
 import { IconBack, IconNext, IconSparkle, IconSync } from '../components/Icons';
+import { IssueList, TextList } from '../components/Analysis';
 import MacroBars from '../components/MacroBars';
 import { RichInline } from '../components/RichText';
 import { useOnline } from '../lib/hooks';
@@ -20,7 +21,8 @@ function signature(data: AppData, month: string): string {
     .filter((s) => (s.dataReal ?? s.dataAtual).startsWith(month))
     .map((s) => `${s.id}:${s.status}`);
   const sets = Object.values(data.sets).filter((s) => s.data.startsWith(month)).length;
-  return [ms.sort().join(','), ss.sort().join(','), sets, JSON.stringify(data.settings.limits)].join('|');
+  const hab = Object.values(data.habitChecks).filter((c) => c.date.startsWith(month)).length;
+  return [ms.sort().join(','), ss.sort().join(','), sets, hab, Object.keys(data.habits).length, JSON.stringify(data.settings.limits), JSON.stringify(data.settings.nutri)].join('|');
 }
 
 export default function Resumo() {
@@ -159,21 +161,51 @@ export default function Resumo() {
           <h3 className="m0">{formatLong(sel)}</h3>
           <span className={`badge ${selEval.status}`}>{STATUS_LABEL[selEval.status]}</span>
         </div>
-        {selEval.motivos.length > 0 && (
-          <ul className="reasons">
-            {selEval.motivos.map((m) => (
-              <li key={m}>{m}</li>
-            ))}
-          </ul>
+        {selEval.status !== 'empty' && (
+          <div className="day-score">
+            {selEval.issues.length ? (
+              <>
+                <strong>
+                  {selEval.issues.length} {selEval.issues.length === 1 ? 'falha' : 'falhas'}
+                </strong>{' '}
+                · {selEval.issues.filter((i) => i.nivel === 3).length} grave, {selEval.issues.filter((i) => i.nivel === 2).length} média, {selEval.issues.filter((i) => i.nivel === 1).length} leve
+              </>
+            ) : (
+              <strong>Nenhuma falha neste dia</strong>
+            )}
+            {sel === today && <span className="muted"> · dia em andamento</span>}
+          </div>
         )}
-        {selEval.meals.length > 0 ? <MacroBars totals={selEval.totals} limits={data.settings.limits} /> : <p className="muted small">Sem refeições registradas.</p>}
+        <IssueList issues={selEval.issues} grouped />
+        {selEval.pendentes.length > 0 && (
+          <>
+            <div className="label mt12">Ainda hoje</div>
+            <TextList items={selEval.pendentes} kind="pendente" />
+          </>
+        )}
+        {selEval.acertos.length > 0 && (
+          <>
+            <div className="label mt12">Acertos</div>
+            <TextList items={selEval.acertos} kind="acerto" />
+          </>
+        )}
+        <TextList items={selEval.notas} kind="nota" />
+        {selEval.meals.length > 0 ? (
+          <div className="mt12">
+            <MacroBars totals={selEval.totals} limits={data.settings.limits} />
+          </div>
+        ) : (
+          <p className="muted small">Sem refeições registradas.</p>
+        )}
         <div className="day-workout">
           <span>
             <span className="label">Treino</span>
             <br />
             {selEval.treinos.length ? selEval.treinos.map((s) => `${s.key} · ${s.titulo}`).join(', ') : selEval.faltas.length ? 'Falta' : <span className="muted">Nenhum</span>}
           </span>
-          {selEval.treinos[0] && <span className="badge">{selEval.treinos[0].status === 'concluida' ? 'Concluído' : 'Parcial'}</span>}
+          {selEval.treinos[0] && (
+            <span className="badge">{selEval.treinos[0].status === 'concluida' ? 'Concluído' : selEval.treinos[0].status === 'em_andamento' ? 'Em andamento' : 'Parcial'}</span>
+          )}
         </div>
       </section>
 

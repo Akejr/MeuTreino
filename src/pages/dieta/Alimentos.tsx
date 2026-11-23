@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react';
 import { ask, toast } from '../../components/Dialog';
 import { IconEdit, IconPlus, IconTrash } from '../../components/Icons';
-import NumberField from '../../components/NumberField';
+import NumberField, { OptNumberField } from '../../components/NumberField';
 import Sheet from '../../components/Sheet';
 import { useOnline } from '../../lib/hooks';
 import { photoToDataURL } from '../../lib/image';
@@ -22,6 +22,10 @@ type LabelAI = {
   proteina?: number | null;
   gordura?: number | null;
   carboidratos?: number | null;
+  fibras?: number | null;
+  acucar_adicionado?: number | null;
+  gordura_saturada?: number | null;
+  sodio?: number | null;
   obs?: string;
 };
 
@@ -41,6 +45,7 @@ const emptyFood = (): Food => ({
 });
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? r1(v) : 0);
+const optNum = (v: unknown, inteiro = false) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? (inteiro ? Math.round(v) : r1(v)) : undefined);
 
 export default function Alimentos({ data }: { data: AppData }) {
   const online = useOnline();
@@ -74,6 +79,10 @@ export default function Alimentos({ data }: { data: AppData }) {
           proteina: num(r.proteina),
           gordura: num(r.gordura),
           carboidratos: num(r.carboidratos),
+          fibras: optNum(r.fibras),
+          acucar: optNum(r.acucar_adicionado),
+          saturada: optNum(r.gordura_saturada),
+          sodio: optNum(r.sodio, true),
         },
       });
     } catch (e) {
@@ -140,6 +149,8 @@ export default function Alimentos({ data }: { data: AppData }) {
             <span>{r0(f.calorias)} kcal</span>
             <span>P {r1(f.proteina)} g</span>
             <span>C {r1(f.carboidratos)} g</span>
+            {f.fibras != null && <span>Fibra {r1(f.fibras)} g</span>}
+            {f.sodio != null && <span>Sódio {r0(f.sodio)} mg</span>}
             <span>G {r1(f.gordura)} g</span>
           </div>
         </section>
@@ -205,6 +216,13 @@ function FoodSheet({ state, onClose }: { state: { food: Food; foto?: string; avi
         <NumberField label="Carb (g)" value={f.carboidratos} onChange={(n) => set({ carboidratos: n })} />
         <NumberField label="Gord (g)" value={f.gordura} onChange={(n) => set({ gordura: n })} />
       </div>
+      <div className="grid4 extra">
+        <OptNumberField label="Fibra (g)" value={f.fibras} onChange={(n) => set({ fibras: n })} />
+        <OptNumberField label="Açúcar ad." value={f.acucar} onChange={(n) => set({ acucar: n })} />
+        <OptNumberField label="Saturada" value={f.saturada} onChange={(n) => set({ saturada: n })} />
+        <OptNumberField label="Sódio mg" value={f.sodio} onChange={(n) => set({ sodio: n })} />
+      </div>
+      <p className="muted small">Fibras, açúcar adicionado, gordura saturada e sódio são opcionais. Vazio = a IA estima.</p>
       <label className="field">
         <span>Observação (opcional)</span>
         <input value={f.obs} placeholder="Ex.: sem lactose" onChange={(e) => set({ obs: e.target.value })} />

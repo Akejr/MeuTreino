@@ -2257,3 +2257,357 @@ details.advanced[open] > summary .chev {
   color: var(--day-bad);
 }
 
+/* ---------- menu com 4 abas ---------- */
+.nav {
+  gap: 8px;
+}
+.nav-pill button {
+  padding: 0 13px;
+}
+.nav-pill button.active {
+  padding: 0 16px;
+}
+.fab {
+  width: 56px;
+  height: 56px;
+}
+@media (max-width: 370px) {
+  .nav-pill button.active span {
+    display: none;
+  }
+}
+
+/* ---------- falhas e listas da análise ---------- */
+.issues {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.issue:first-child {
+  border-top: 0;
+}
+.issue-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--day-ok);
+}
+.issue.n2 .issue-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2.5px var(--day-bad);
+}
+.issue.n3 .issue-dot {
+  background: var(--day-bad);
+}
+.issue-tag {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.issue.n3 .issue-tag {
+  color: var(--day-bad);
+}
+.issue-group + .issue-group {
+  margin-top: 10px;
+}
+.issue-area {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 12px;
+}
+.tlist {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 14px;
+}
+.tlist li {
+  position: relative;
+  padding: 5px 0 5px 20px;
+}
+.tlist li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 11px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+}
+.tlist.acerto li::before {
+  border: 0;
+  width: 10px;
+  height: 6px;
+  top: 10px;
+  border-radius: 0;
+  border-left: 2.5px solid var(--day-good);
+  border-bottom: 2.5px solid var(--day-good);
+  transform: rotate(-45deg);
+}
+.tlist.nota {
+  color: var(--muted);
+  font-size: 13px;
+}
+.tlist.nota li::before {
+  width: 4px;
+  height: 4px;
+  top: 12px;
+  border: 0;
+  background: var(--muted);
+}
+.day-score {
+  font-size: 14px;
+  margin: 2px 0 4px;
+  color: var(--text-2);
+}
+
+/* ---------- qualidade da dieta ---------- */
+.quality .q-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.q-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.q-val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+.q-val small {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.q-row .bar {
+  background: var(--surface-3);
+}
+.q-row .bar-fill {
+  background: var(--ink);
+}
+.q-row.warn .bar-fill {
+  background: var(--day-bad);
+}
+.q-row.warn .q-val {
+  color: var(--day-bad);
+}
+.q-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.editor .quality {
+  box-shadow: none;
+  border: 1.5px solid var(--line);
+  margin: 10px 0;
+}
+.draft-analysis {
+  margin: 10px 0;
+}
+.dicas {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--ink);
+  color: #fff;
+}
+.dicas .label {
+  color: rgba(255, 255, 255, 0.6);
+}
+.dicas ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+.dicas li {
+  margin: 5px 0;
+}
+.dicas-details {
+  margin-top: 8px;
+}
+.dicas-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.mini-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  background: var(--surface-2);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  vertical-align: 1px;
+}
+.tags-row {
+  gap: 6px;
+}
+.tags-row:empty {
+  display: none;
+}
+.grid4.extra .field > span {
+  color: var(--muted);
+}
+
+/* ---------- hábitos ---------- */
+.hero-flame {
+  width: 26px;
+  height: 26px;
+  vertical-align: -3px;
+}
+.chips.center {
+  justify-content: center;
+}
+.habit {
+  padding: 16px 16px 14px;
+}
+.habit.done {
+  box-shadow: inset 0 0 0 2px var(--ink), var(--shadow);
+}
+.streak {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.streak svg {
+  width: 20px;
+  height: 20px;
+}
+.streak strong {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.streak.on {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--text);
+  background: var(--surface);
+}
+.streak.lit {
+  background: var(--ink);
+  color: #fff;
+  box-shadow: none;
+}
+.streak.lit svg {
+  fill: #fff;
+}
+.habit-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font-size: 16px;
+}
+.habit-name .risk {
+  color: var(--text);
+  font-weight: 700;
+}
+.habit-check {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--surface);
+  color: #c9c9c9;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.1s;
+}
+.habit-check svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.6;
+}
+.habit-check:active {
+  transform: scale(0.92);
+}
+.habit-check.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.hweek {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 14px;
+}
+.hday {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.hday i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+}
+.hday.on i {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.hday.today span {
+  color: var(--text);
+}
+.hday.today i {
+  border-color: var(--text);
+}
+.hday:disabled {
+  opacity: 0.3;
+}
+.gap0 {
+  gap: 0;
+}

@@ -2,30 +2,32 @@ import { useEffect, useState, type ComponentType } from 'react';
 import AccessGate from './components/AccessGate';
 import { AIFab } from './components/AIChat';
 import { DialogHost } from './components/Dialog';
-import { IconBack, IconCloudOff, IconCloudOk, IconConfig, IconDieta, IconResumo, IconSync, IconTreino } from './components/Icons';
+import { IconBack, IconCloudOff, IconCloudOk, IconConfig, IconDieta, IconFlame, IconResumo, IconSync, IconTreino } from './components/Icons';
 import { showSession, useViewingSession } from './lib/sessionUI';
 import { pendingCount, useData } from './lib/storage';
 import { useSyncStatus } from './lib/sync';
 import Config from './pages/Config';
 import Dieta from './pages/Dieta';
+import Habitos from './pages/Habitos';
 import Resumo from './pages/Resumo';
 import Treino from './pages/Treino';
 import SessionView from './pages/treino/SessionView';
 import { activeSession } from './training/schedule';
 
-type Tab = 'treino' | 'dieta' | 'resumo' | 'config';
+type Tab = 'treino' | 'dieta' | 'habitos' | 'resumo' | 'config';
 
 const TABS: { id: Exclude<Tab, 'config'>; label: string; Icon: ComponentType }[] = [
   { id: 'treino', label: 'Treino', Icon: IconTreino },
   { id: 'dieta', label: 'Dieta', Icon: IconDieta },
+  { id: 'habitos', label: 'Hábitos', Icon: IconFlame },
   { id: 'resumo', label: 'Resumo', Icon: IconResumo },
 ];
 
-const TITLES: Record<Tab, string> = { treino: 'Treino', dieta: 'Dieta', resumo: 'Resumo', config: 'Ajustes' };
+const TITLES: Record<Tab, string> = { treino: 'Treino', dieta: 'Dieta', habitos: 'Hábitos', resumo: 'Resumo', config: 'Ajustes' };
 
 const readHash = (): Tab => {
   const h = location.hash.slice(1);
-  return (['treino', 'dieta', 'resumo', 'config'] as Tab[]).includes(h as Tab) ? (h as Tab) : 'treino';
+  return (['treino', 'dieta', 'habitos', 'resumo', 'config'] as Tab[]).includes(h as Tab) ? (h as Tab) : 'treino';
 };
 
 function SyncBadge({ onClick }: { onClick: () => void }) {
@@ -121,6 +123,7 @@ export default function App() {
           <>
             {tab === 'treino' && <Treino />}
             {tab === 'dieta' && <Dieta />}
+            {tab === 'habitos' && <Habitos />}
             {tab === 'resumo' && <Resumo />}
             {tab === 'config' && <Config />}
           </>

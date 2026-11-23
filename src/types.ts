@@ -41,26 +41,57 @@ export interface TrainingSettings {
   aceitos: string[];
 }
 
+/** Metas de qualidade da dieta (além de calorias e macros). */
+export interface NutriTargets {
+  /** Fibras: mínimo por dia (g). */
+  fibra: number;
+  /** Sódio: máximo por dia (mg). */
+  sodio: number;
+  /** Açúcar adicionado: máximo por dia (g). */
+  acucar: number;
+  /** Gordura saturada: máximo por dia (g). */
+  saturada: number;
+  /** Maior fatia do limite diário de calorias numa só refeição (%). */
+  refeicaoMaxPct: number;
+}
+
 export interface Settings extends Synced {
   /** Versão dos dados pré-configurados já aplicados. */
   seed?: number;
   limits: Limits;
+  nutri: NutriTargets;
   profile: Profile;
   training: TrainingSettings;
 }
 
 // ---------- dieta ----------
 
-export interface FoodItem extends Macros {
+/** Nutrientes de qualidade. Ausente = desconhecido (registros antigos). */
+export interface NutriExtra {
+  fibras?: number;
+  /** Açúcar adicionado (g): só o colocado no preparo ou pelo fabricante. */
+  acucar?: number;
+  saturada?: number;
+  /** mg */
+  sodio?: number;
+}
+
+/** Classificação NOVA (Guia Alimentar): 1 in natura, 2 ingrediente culinário, 3 processado, 4 ultraprocessado. */
+export type Nova = 1 | 2 | 3 | 4;
+
+export interface FoodItem extends Macros, NutriExtra {
   id: string;
   nome: string;
   quantidade: string;
   /** Alimento cadastrado usado no cálculo. */
   foodId?: string;
+  nova?: Nova;
+  /** Suplemento (whey, creatina…): fica fora da conta de ultraprocessados. */
+  suplemento?: boolean;
 }
 
 /** Alimento cadastrado pelo usuário (valores por porção, como no rótulo). */
-export interface Food extends Synced, Macros {
+export interface Food extends Synced, Macros, NutriExtra {
   id: string;
   nome: string;
   /** Como o usuário chama o alimento, separado por vírgula (ex.: "whey, meu whey"). */
@@ -80,6 +111,8 @@ export interface Meal extends Synced {
   hora: string;
   itens: FoodItem[];
   criadoEm: number;
+  /** Sugestões da IA quando a refeição foi calculada. */
+  dicas?: string[];
 }
 
 export interface ChatMsg {
@@ -99,6 +132,30 @@ export interface DietDraft {
   editingMealId?: string;
   messages: ChatMsg[];
   itens: FoodItem[];
+  dicas?: string[];
+}
+
+// ---------- hábitos ----------
+
+export interface Habit extends Synced {
+  id: string;
+  nome: string;
+  /** Primeiro dia que conta (YYYY-MM-DD). */
+  inicio: string;
+  criadoEm: number;
+  ordem: number;
+  /** Arquivado: deixa de contar a partir deste dia. */
+  arquivadoEm?: string;
+  /** Períodos arquivados e depois reativados: [de, ate) não contam. */
+  pausas?: { de: string; ate: string }[];
+}
+
+/** Um dia marcado. id = `${habitId}~${date}`; desmarcar apaga o registro. */
+export interface HabitCheck extends Synced {
+  id: string;
+  habitId: string;
+  date: string;
+  em: number;
 }
 
 // ---------- treino ----------
@@ -280,6 +337,8 @@ export interface AppData {
   plans: Record<string, PlanVersion>;
   sessions: Record<string, Session>;
   sets: Record<string, SetLog>;
+  habits: Record<string, Habit>;
+  habitChecks: Record<string, HabitCheck>;
   dietDraft: DietDraft | null;
   aiChats: Record<string, ChatMsg[]>;
   tips: Record<string, Tips>;
@@ -289,5 +348,5 @@ export interface AppData {
   legacy?: Record<string, unknown>;
 }
 
-export const SYNC_COLLECTIONS = ['meals', 'foods', 'equipment', 'plans', 'sessions', 'sets'] as const;
+export const SYNC_COLLECTIONS = ['meals', 'foods', 'equipment', 'plans', 'sessions', 'sets', 'habits', 'habitChecks'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];

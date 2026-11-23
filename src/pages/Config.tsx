@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AccessCodeForm } from '../components/AccessGate';
 import { useAIContext } from '../components/AIChat';
 import { ask, notify, toast } from '../components/Dialog';
-import { IconBox, IconCloud, IconDown, IconFlame, IconShield, IconTreino, IconUser } from '../components/Icons';
+import { IconBox, IconCloud, IconDieta, IconDown, IconShield, IconTreino, IconUser } from '../components/Icons';
 import NumberField from '../components/NumberField';
 import { useOnline } from '../lib/hooks';
 import { accessCodeOf } from '../lib/openrouter';
@@ -10,7 +10,7 @@ import { configContext } from '../lib/prompts';
 import { exportBackup, getData, getSaveError, importBackup, listSnapshots, pendingCount, restoreSnapshot, setData, storageInfo, useData, type SnapshotInfo } from '../lib/storage';
 import { syncNow, useSyncStatus } from '../lib/sync';
 import { errMsg } from '../lib/utils';
-import type { Base, DiaTipo, Limits, Profile, Settings, TrainingSettings, Unidade } from '../types';
+import type { Base, DiaTipo, Limits, NutriTargets, Profile, Settings, TrainingSettings, Unidade } from '../types';
 import { answerQuestion, removeNextWeight, saveEquipment } from '../training/actions';
 import { BASE_LABEL, BASE_OPCOES, CATALOG, getEx, QUESTIONS } from '../training/catalog';
 import { fmtW } from '../training/engine';
@@ -50,6 +50,7 @@ export default function Config() {
   const setS = (patch: Partial<Settings>) => setData((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
   const setT = (patch: Partial<TrainingSettings>) => setData((d) => ({ ...d, settings: { ...d.settings, training: { ...d.settings.training, ...patch } } }));
   const setL = (k: keyof Limits, v: number) => setS({ limits: { ...s.limits, [k]: v } });
+  const setN = (k: keyof NutriTargets, v: number) => setS({ nutri: { ...s.nutri, [k]: Math.max(0, v) } });
   const setP = (k: keyof Profile, v: string) => setS({ profile: { ...s.profile, [k]: v } });
 
   return (
@@ -75,13 +76,22 @@ export default function Config() {
       </section>
 
       <section className="card">
-        <Head icon={<IconFlame />} title="Limites da dieta" sub="Por dia" />
+        <Head icon={<IconDieta />} title="Limites da dieta" sub="Por dia" />
         <div className="grid2">
           <NumberField label="Proteína meta (g)" value={s.limits.proteina} onChange={(n) => setL('proteina', n)} />
           <NumberField label="Calorias máx (kcal)" value={s.limits.calorias} onChange={(n) => setL('calorias', n)} />
           <NumberField label="Carboidratos máx (g)" value={s.limits.carboidratos} onChange={(n) => setL('carboidratos', n)} />
           <NumberField label="Gordura máx (g)" value={s.limits.gordura} onChange={(n) => setL('gordura', n)} />
         </div>
+        <div className="label mt12">Qualidade</div>
+        <div className="grid2">
+          <NumberField label="Fibras mín (g)" value={s.nutri.fibra} onChange={(n) => setN('fibra', n)} />
+          <NumberField label="Sódio máx (mg)" value={s.nutri.sodio} onChange={(n) => setN('sodio', n)} />
+          <NumberField label="Açúcar adicionado máx (g)" value={s.nutri.acucar} onChange={(n) => setN('acucar', n)} />
+          <NumberField label="Gordura saturada máx (g)" value={s.nutri.saturada} onChange={(n) => setN('saturada', n)} />
+          <NumberField label="Máx por refeição (% das kcal)" value={s.nutri.refeicaoMaxPct} onChange={(n) => setN('refeicaoMaxPct', n)} />
+        </div>
+        <p className="muted small">Já vem configurado. A análise das refeições e o calendário usam esses valores.</p>
       </section>
 
       <section className="card">

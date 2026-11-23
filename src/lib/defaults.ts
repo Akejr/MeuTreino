@@ -1,4 +1,4 @@
-import type { AppData, Limits, Profile, TrainingSettings } from '../types';
+import type { AppData, Limits, NutriTargets, Profile, TrainingSettings } from '../types';
 
 /** Sobe quando os dados pré-configurados mudam (aplicados uma vez em aparelhos antigos). */
 export const SEED_VERSION = 1;
@@ -16,6 +16,12 @@ export const DEFAULT_PROFILE: Profile = {
 
 /** Proteína é meta; calorias, carboidratos e gordura são limites máximos. */
 export const DEFAULT_LIMITS: Limits = { calorias: 2000, proteina: 160, gordura: 60, carboidratos: 218 };
+
+/**
+ * Qualidade da dieta. Fibras: cerca de 14 g por 1.000 kcal, arredondado para 30 g.
+ * Sódio < 2.000 mg e açúcar adicionado < 5% das calorias (OMS). Saturada < 10% das calorias.
+ */
+export const DEFAULT_NUTRI: NutriTargets = { fibra: 30, sodio: 2000, acucar: 25, saturada: 22, refeicaoMaxPct: 40 };
 
 /** Respostas do catálogo já confirmadas na academia. */
 export const DEFAULT_RESPOSTAS: Record<string, string[]> = {
@@ -46,6 +52,7 @@ export function defaultData(): AppData {
       _u: 1,
       seed: SEED_VERSION,
       limits: { ...DEFAULT_LIMITS },
+      nutri: { ...DEFAULT_NUTRI },
       profile: { ...DEFAULT_PROFILE },
       training: defaultTraining(),
     },
@@ -56,6 +63,8 @@ export function defaultData(): AppData {
     plans: {},
     sessions: {},
     sets: {},
+    habits: {},
+    habitChecks: {},
     dietDraft: null,
     aiChats: {},
     tips: {},

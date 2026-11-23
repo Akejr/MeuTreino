@@ -230,6 +230,7 @@ function applyRows(coll: string, rows: Row[]) {
           ...def,
           ...s,
           limits: { ...def.limits, ...s.limits },
+          nutri: { ...def.nutri, ...s.nutri },
           profile: { ...def.profile, ...s.profile },
           training: { ...defaultTraining(), ...s.training },
           _u: u,

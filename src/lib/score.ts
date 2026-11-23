@@ -1,7 +1,18 @@
-import type { AppData, Macros, Meal, Session } from '../types';
+/**
+ * Avaliação de cada dia do calendário. Qualquer falha, por menor que seja, aparece.
+ * - Cada falha tem um nível: leve (1 ponto), média (2) ou grave (4).
+ * - Bom = nenhuma falha. Ruim = alguma falha grave ou 5 pontos ou mais. O resto é "mais ou menos".
+ * - Hoje só contam os excessos e o que já terminou; o que ainda dá para fazer aparece como pendente.
+ */
+import { missedOn } from '../habits/habits';
+import { sessionSteps } from '../training/engine';
+import { planSessionOf } from '../training/schedule';
+import type { AppData, Macros, Meal, Session, SetLog } from '../types';
+import { dietDay, type Issue, type Nivel } from './nutrition';
 import { todayISO } from './utils';
 
 export type DayStatus = 'good' | 'ok' | 'bad' | 'empty';
+export type { Issue, Nivel };
 
 export const emptyMacros = (): Macros => ({ calorias: 0, proteina: 0, gordura: 0, carboidratos: 0 });
 
@@ -28,14 +39,29 @@ export const dayTotals = (data: AppData, date: string) => sumMacros(mealsOf(data
 export function sessionsOn(data: AppData, date: string) {
   const feitas: Session[] = [];
   const naoFeitas: Session[] = [];
+  const remarcadas: Session[] = [];
   for (const s of Object.values(data.sessions)) {
     const dia = s.dataReal ?? s.dataAtual;
     if ((s.status === 'concluida' || s.status === 'parcial' || s.status === 'em_andamento') && dia === date) feitas.push(s);
     else if (s.status === 'falta' && s.dataAtual === date) naoFeitas.push(s);
-    else if (s.historicoDatas.some((h) => h.motivo === 'falta' && h.de === date)) naoFeitas.push(s);
     else if (s.status === 'pendente' && s.dataAtual === date && date < todayISO()) naoFeitas.push(s);
+    else if (s.historicoDatas.some((h) => h.motivo === 'falta' && h.de === date)) remarcadas.push(s);
   }
-  return { feitas, naoFeitas };
+  return { feitas, naoFeitas: [...naoFeitas, ...remarcadas], perdidas: naoFeitas, remarcadas };
+}
+
+const setsCache = new WeakMap<object, Map<string, SetLog[]>>();
+function setsBySession(sets: Record<string, SetLog>): Map<string, SetLog[]> {
+  const hit = setsCache.get(sets);
+  if (hit) return hit;
+  const m = new Map<string, SetLog[]>();
+  for (const s of Object.values(sets)) {
+    const arr = m.get(s.sessionId);
+    if (arr) arr.push(s);
+    else m.set(s.sessionId, [s]);
+  }
+  setsCache.set(sets, m);
+  return m;
 }
 
 export interface DayEval {
@@ -44,72 +70,101 @@ export interface DayEval {
   meals: Meal[];
   treinos: Session[];
   faltas: Session[];
+  issues: Issue[];
+  /** O que ainda falta fazer hoje. */
+  pendentes: string[];
+  acertos: string[];
+  notas: string[];
+  pontos: number;
+  /** Textos das falhas (compatível com as telas antigas). */
   motivos: string[];
 }
 
-/**
- * Regras:
- * - Calorias/gordura/carbo: até 3% acima = ok; 3–15% acima = 1 ponto; >15% = 2 pontos.
- * - Proteína (meta): >= 90% ok; 70–90% = 1 ponto; < 70% = 2 pontos.
- * - Sem refeições registradas = 2 pontos. Treino perdido = 1 ponto.
- * - 0 pontos = bom, 1–2 = mais ou menos, 3+ = ruim.
- * Hoje não é penalizado por "faltar" proteína ou refeições (o dia está em andamento).
- */
+const PESO: Record<Nivel, number> = { 1: 1, 2: 2, 3: 4 };
+
+function trainingIssues(data: AppData, date: string, finished: boolean, out: { issues: Issue[]; pendentes: string[]; acertos: string[] }) {
+  const { feitas, perdidas, remarcadas } = sessionsOn(data, date);
+  const add = (nivel: Nivel, texto: string) => out.issues.push({ area: 'treino', nivel, texto });
+  const t = data.settings.training;
+  const porSessao = setsBySession(data.sets);
+
+  for (const s of perdidas) add(2, `Treino **${s.key} · ${s.titulo}** não feito.`);
+  for (const s of remarcadas) add(1, `Falta no treino **${s.key}**: foi remarcado para outro dia.`);
+
+  for (const s of feitas) {
+    const sets = (porSessao.get(s.id) ?? []).filter((x) => x.status === 'feita');
+    const trabalho = sets.filter((x) => x.tipo === 'trabalho');
+    if (s.status === 'em_andamento') {
+      const pausado = s.intervalos.length > 0 && s.intervalos[s.intervalos.length - 1].f != null;
+      if (finished) add(1, `Treino **${s.key}** ficou aberto${pausado ? ' (pausado)' : ''} e não foi encerrado.`);
+      else out.pendentes.push(`Treino **${s.key}** ${pausado ? 'pausado' : 'em andamento'}: ${trabalho.length} séries feitas.`);
+      continue;
+    }
+    const ps = planSessionOf(data, s);
+    const previstas = ps ? sessionSteps(ps, s, t).filter((x) => x.tipo === 'trabalho').length : trabalho.length;
+    if (!trabalho.length) add(2, `Treino **${s.key}** encerrado sem nenhuma série de trabalho.`);
+    else if (trabalho.length < previstas) add(1, `Treino **${s.key}** incompleto: **${trabalho.length} de ${previstas}** séries de trabalho.`);
+    else out.acertos.push(`Treino ${s.key} completo (${trabalho.length} séries).`);
+
+    const semEsforco = trabalho.filter((x) => x.rir == null).length;
+    if (semEsforco >= 2 && semEsforco >= trabalho.length / 3) add(1, `Esforço não informado em **${semEsforco} séries**: sem isso a carga não sobe.`);
+    const alerta = sets.some((x) => x.dorTipo === 'alerta');
+    if (alerta) add(3, 'Sintoma de alerta registrado no treino (dor no peito, desmaio ou falta de ar). Procure avaliação antes de treinar de novo.');
+    else if (sets.some((x) => x.dor)) add(1, `Dor registrada no treino **${s.key}**.`);
+    if (s.duracaoSeg && s.duracaoSeg / 60 > t.duracaoMin + 20) add(1, `Treino **${s.key}** durou **${Math.round(s.duracaoSeg / 60)} min** (alvo ${t.duracaoMin} min).`);
+  }
+
+  if (!finished) {
+    const hoje = Object.values(data.sessions).find((s) => s.status === 'pendente' && s.dataAtual === date);
+    if (hoje) out.pendentes.push(`Treino **${hoje.key} · ${hoje.titulo}** ainda não feito.`);
+  }
+}
+
+function habitIssues(data: AppData, date: string, finished: boolean, out: { issues: Issue[]; pendentes: string[]; acertos: string[] }) {
+  const { ativos, faltou } = missedOn(data, date);
+  if (!ativos.length) return;
+  if (!faltou.length) {
+    out.acertos.push(`Todos os ${ativos.length} hábitos feitos.`);
+    return;
+  }
+  const nomes = faltou.map((h) => `**${h.nome}**`).join(', ');
+  if (!finished) out.pendentes.push(`Hábitos pendentes: ${nomes}.`);
+  else out.issues.push({ area: 'habitos', nivel: faltou.length >= 2 && faltou.length >= ativos.length / 2 ? 2 : 1, texto: `Hábitos não feitos: ${nomes} (${faltou.length} de ${ativos.length}).` });
+}
+
 export function evaluateDay(data: AppData, date: string): DayEval {
+  const today = todayISO();
   const meals = mealsOf(data, date);
   const totals = sumMacros(meals.flatMap((m) => m.itens));
   const { feitas, naoFeitas } = sessionsOn(data, date);
-  const motivos: string[] = [];
-  const base = { totals, meals, treinos: feitas, faltas: naoFeitas, motivos };
-  const today = todayISO();
+  const base = { totals, meals, treinos: feitas, faltas: naoFeitas };
+  const vazio: DayEval = { ...base, status: 'empty', issues: [], pendentes: [], acertos: [], notas: [], pontos: 0, motivos: [] };
+  if (date > today) return vazio;
 
-  if (date > today || (meals.length === 0 && !feitas.length && !naoFeitas.length)) return { ...base, status: 'empty' };
+  const temHabitos = missedOn(data, date).ativos.length > 0;
+  if (!meals.length && !feitas.length && !naoFeitas.length && !temHabitos) return vazio;
 
-  const L = data.settings.limits;
-  const emAndamento = date === today;
-  let pts = 0;
+  const finished = date < today;
+  const diet = dietDay(data, meals, finished);
+  const out = { issues: [...diet.issues], pendentes: [...diet.pendentes], acertos: [...diet.acertos] };
+  trainingIssues(data, date, finished, out);
+  habitIssues(data, date, finished, out);
 
-  if (meals.length === 0) {
-    if (!emAndamento) {
-      pts += 2;
-      motivos.push('Nenhuma refeição registrada');
-    }
-  } else {
-    const maximos = [
-      ['calorias', 'Calorias'],
-      ['gordura', 'Gordura'],
-      ['carboidratos', 'Carboidratos'],
-    ] as const;
-    for (const [k, label] of maximos) {
-      if (!L[k]) continue;
-      const r = totals[k] / L[k];
-      if (r > 1.15) {
-        pts += 2;
-        motivos.push(`${label} ${Math.round((r - 1) * 100)}% acima do limite`);
-      } else if (r > 1.03) {
-        pts += 1;
-        motivos.push(`${label} ${Math.round((r - 1) * 100)}% acima do limite`);
-      }
-    }
-    if (L.proteina && !emAndamento) {
-      const r = totals.proteina / L.proteina;
-      if (r < 0.7) {
-        pts += 2;
-        motivos.push(`Proteína em ${Math.round(r * 100)}% da meta`);
-      } else if (r < 0.9) {
-        pts += 1;
-        motivos.push(`Proteína em ${Math.round(r * 100)}% da meta`);
-      }
-    }
-  }
-
-  if (naoFeitas.length && !feitas.length) {
-    pts += 1;
-    motivos.push('Treino perdido');
-  }
-  if (emAndamento) motivos.push('Dia em andamento');
-
-  return { ...base, status: pts === 0 ? 'good' : pts <= 2 ? 'ok' : 'bad' };
+  const pontos = out.issues.reduce((n, i) => n + PESO[i.nivel], 0);
+  const grave = out.issues.some((i) => i.nivel === 3);
+  let status: DayStatus = !out.issues.length ? 'good' : grave || pontos >= 5 ? 'bad' : 'ok';
+  // Hoje sem nada registrado nem feito: ainda não há o que avaliar.
+  if (!finished && !out.issues.length && !meals.length && !feitas.length && !out.acertos.length) status = 'empty';
+  return {
+    ...base,
+    status,
+    issues: out.issues.sort((a, b) => b.nivel - a.nivel),
+    pendentes: out.pendentes,
+    acertos: out.acertos,
+    notas: diet.notas,
+    pontos,
+    motivos: out.issues.map((i) => i.texto.replace(/\*\*/g, '')),
+  };
 }
 
 export const STATUS_LABEL: Record<DayStatus, string> = {

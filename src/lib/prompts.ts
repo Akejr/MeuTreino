@@ -1,4 +1,6 @@
-import type { AppData, ChatMsg, DietDraft, Food, PlanVersion, Session } from '../types';
+import { activeHabits, habitStats, isActiveOn, isDone, perfectStreak } from '../habits/habits';
+import type { AppData, ChatMsg, DietDraft, Food, Meal, PlanVersion, Session } from '../types';
+import { dietDay, fullTotals, mealChecks, NIVEL_LABEL, targets, type FullTotals, type Issue } from './nutrition';
 import { BY_ID, CATALOG, getEx, GRUPO_LABEL, isActive, QUESTIONS, resolveExercise } from '../training/catalog';
 import {
   estimateSession,
@@ -13,8 +15,8 @@ import {
 } from '../training/engine';
 import { activePlan, nextSession, planSessionOf, weekView } from '../training/schedule';
 import type { AIMessage } from './openrouter';
-import { dayTotals, evaluateDay, mealsOf, STATUS_LABEL, sumMacros } from './score';
-import { addDays, daysOfMonth, formatLong, r0, todayISO, weekStart, weekdayName } from './utils';
+import { evaluateDay, mealsOf, STATUS_LABEL } from './score';
+import { addDays, daysOfMonth, formatLong, nowHHMM, r0, r1, todayISO, weekStart, weekdayName } from './utils';
 
 // ===================== blocos de contexto =====================
 
@@ -157,21 +159,21 @@ function adesaoTexto(data: AppData): string {
 
 export function dietContext(data: AppData, date: string): string {
   const meals = mealsOf(data, date);
-  const t = dayTotals(data, date);
   const draft = data.dietDraft?.date === date ? data.dietDraft : null;
-  return `DIETA DE ${formatLong(date)} (${date})
-LIMITES: ${limitesTexto(data)}
-TOTAL SALVO: ${r0(t.calorias)} kcal, P ${r0(t.proteina)} g, G ${r0(t.gordura)} g, C ${r0(t.carboidratos)} g
+  const ev = evaluateDay(data, date);
+  const diet = dietDay(data, meals, date < todayISO());
+  const T = targets(data);
+  return `DIETA DE ${formatLong(date)} (${date})${date === todayISO() ? `, dia em andamento, agora ${nowHHMM()}` : ''}
+METAS: ${limitesTexto(data)} | fibras ${T.fibra} g ou mais | açúcar adicionado até ${T.acucar} g | saturada até ${T.saturada} g | sódio até ${T.sodio} mg | proteína por refeição ~${T.protRefeicao} g | até ${T.refeicaoMaxPct}% das kcal por refeição
+TOTAL SALVO: ${fullText(diet.totals)}
 REFEIÇÕES
-${
-  meals
-    .map((m) => {
-      const s = sumMacros(m.itens);
-      return `- ${m.hora} ${m.refeicao} (${r0(s.calorias)} kcal, P ${r0(s.proteina)}): ${m.itens.map((i) => `${i.nome} ${i.quantidade}`).join(', ')}`;
-    })
-    .join('\n') || '(nenhuma)'
-}
+${meals.map((m) => mealLine(data, m)).join('\n') || '(nenhuma)'}
 ${draft?.itens.length ? `RASCUNHO NÃO SALVO: ${draft.itens.map((i) => i.nome).join(', ')}` : ''}
+FALHAS CALCULADAS PELO APP
+${issuesText(ev.issues.filter((i) => i.area === 'dieta')) || '(nenhuma)'}
+AINDA FALTA HOJE: ${diet.pendentes.join(' ').replace(/\*\*/g, '') || '-'}
+ACERTOS: ${diet.acertos.join(' ') || '-'}
+${diet.notas.length ? `OBS: ${diet.notas.join(' ')}` : ''}
 TREINO DO DIA: ${trainingOfDay(data, date)}
 ALIMENTOS CADASTRADOS: ${Object.values(data.foods).map((f) => f.nome).join(', ') || 'nenhum'}`;
 }
@@ -189,14 +191,19 @@ export function monthContext(data: AppData, month: string, selected?: string): s
     .map((d) => {
       const ev = evaluateDay(data, d);
       if (ev.status === 'empty') return null;
+      const q = fullTotals(ev.meals.flatMap((m) => m.itens));
       return {
         data: d,
         avaliacao: STATUS_LABEL[ev.status],
-        motivos: ev.motivos,
+        falhas: ev.issues.map((i) => `[${NIVEL_LABEL[i.nivel]}] ${i.texto.replace(/\*\*/g, '')}`),
+        acertos: ev.acertos,
         kcal: r0(ev.totals.calorias),
         prot: r0(ev.totals.proteina),
         gord: r0(ev.totals.gordura),
         carb: r0(ev.totals.carboidratos),
+        fibras: r1(q.fibras),
+        sodio: r0(q.sodio),
+        acucar: r1(q.acucar),
         refeicoes: ev.meals.length,
         treino: ev.treinos.map((s) => `${s.key} ${s.status}`).join(', ') || (ev.faltas.length ? 'falta' : 'nenhum'),
       };
@@ -218,7 +225,8 @@ DIAS COM REGISTRO
 ${dias.length ? JSON.stringify(dias) : '(nenhum)'}
 EVOLUÇÃO DE CARGAS NO MÊS (primeira → última)
 ${evolucao.join('\n') || '(sem séries registradas)'}
-ADESÃO AO TREINO (4 semanas): ${adesaoTexto(data)}`;
+ADESÃO AO TREINO (4 semanas): ${adesaoTexto(data)}
+${habitsContext(data)}`;
 }
 
 export function configContext(data: AppData): string {
@@ -237,38 +245,59 @@ Equipamentos cadastrados: ${Object.values(data.equipment).length}`;
 
 // ===================== nutrição =====================
 
-export const NUTRI_SYSTEM = `Você é um nutricionista que calcula calorias e macronutrientes do que o usuário comeu.
+export function nutriSystem(data: AppData): string {
+  const T = targets(data);
+  const p = data.settings.profile;
+  return `Você é um nutricionista esportivo. Calcula e AVALIA cada refeição que o usuário registra, pensando no dia inteiro.
+Usuário: ${p.sexo || 'adulto'}, ${p.idade || '?'} anos, ${p.peso || '?'} kg, ${p.altura || '?'} cm, ${p.nivel || ''}. Objetivo: ${p.objetivo || 'saúde'}. Treina musculação 5 vezes por semana.
+Metas do dia: calorias até ${T.calorias} kcal, proteína ${T.proteina} g (META), carboidratos até ${T.carboidratos} g, gordura até ${T.gordura} g (mínimo saudável ~${T.gorduraMin} g), fibras ${T.fibra} g ou mais, açúcar adicionado até ${T.acucar} g, gordura saturada até ${T.saturada} g, sódio até ${T.sodio} mg. Proteína por refeição principal: ~${T.protRefeicao} g (mínimo ${T.protMin} g). Nenhuma refeição deve passar de ${T.refeicaoMaxPct}% do limite de calorias.
 
-Regras:
-- Use como referência a Tabela TACO (alimentos brasileiros) e, na falta, a USDA.
-- Se a quantidade não for informada, assuma uma porção típica brasileira e deixe isso claro no campo "quantidade".
-- Se o usuário mencionar marca ou produto industrializado, use os valores do rótulo se souber.
-- ALIMENTOS CADASTRADOS: o usuário cadastrou os produtos que ele usa (marca e tabela do rótulo). Quando ele citar um alimento que corresponde a um cadastrado pelo nome ou apelido (ex.: "whey", "meu iogurte", "leite"), use OBRIGATORIAMENTE os valores do cadastro, proporcionais à quantidade (ex.: porção 200 ml e ele tomou 300 ml = 1,5 porção; 3 scoops com porção de 1 scoop = 3 porções). Preencha "alimento_id" com o id do cadastro. Se houver dois cadastros possíveis, use o mais provável e pergunte.
-- Alimento composto (ex.: "sucrilhos com leite"): separe em itens e use o cadastro de cada parte quando existir.
+CÁLCULO
+- Referência: Tabela TACO (alimentos brasileiros); na falta, USDA FoodData Central. Produto industrializado conhecido: use o rótulo.
+- ALIMENTOS CADASTRADOS: o usuário cadastrou os produtos que ele usa (marca e tabela do rótulo). Quando ele citar um alimento que corresponde a um cadastrado pelo nome ou apelido (ex.: "whey", "meu iogurte", "leite"), use OBRIGATORIAMENTE os valores do cadastro, proporcionais à quantidade (porção 200 ml e ele tomou 300 ml = 1,5 porção; 3 scoops com porção de 1 scoop = 3 porções). Preencha "alimento_id" com o id do cadastro. Se houver dois cadastros possíveis, use o mais provável e pergunte. Valor que o cadastro não tem (ex.: fibras): estime pela TACO.
+- Quantidade não informada: assuma porção típica brasileira e deixe claro em "quantidade".
+- Preparo: some o óleo ou a manteiga quando o preparo indicar (frito, à milanesa, refogado, na manteiga; 1 colher de sopa de óleo ≈ 108 kcal e 12 g de gordura). Se o preparo de um alimento que costuma levar óleo não foi dito, assuma caseiro com pouco óleo e diga.
+- Alimento composto (ex.: "sucrilhos com leite", "x-burguer", "marmita"): separe em itens e use o cadastro de cada parte quando existir.
 - Sempre devolva a LISTA COMPLETA e atualizada de itens da refeição em rascunho: mantenha os itens anteriores, aplique as correções pedidas e adicione os novos.
-- calorias em kcal; proteina, gordura e carboidratos em gramas; somente números, com no máximo 1 casa decimal.
-- No campo "resposta", explique os cálculos de forma curta (ex.: "2 ovos (100 g): 143 kcal...") e o total. Destaque com **negrito** o total e os itens que vieram do cadastro. Se houver ambiguidade, faça a melhor estimativa e pergunte para confirmar.
+- Para cada item: calorias (kcal); proteina, carboidratos, gordura, fibras, acucar_adicionado e gordura_saturada em gramas (1 casa decimal); sodio em mg (inteiro); nova = classificação NOVA do Guia Alimentar (1 in natura ou minimamente processado, 2 ingrediente culinário como óleo, açúcar e sal, 3 processado, 4 ultraprocessado); suplemento = true para whey, caseína, albumina, creatina e similares.
+- Açúcar adicionado é só o colocado no preparo ou pelo fabricante (açúcar, mel, xarope, achocolatado). O açúcar natural da fruta e do leite não conta.
 
+AVALIAÇÃO (campo "dicas")
+Olhe a refeição dentro do dia: o que já foi comido, o horário, o treino do dia e quanto ainda resta. Aponte TODOS os problemas, mesmo pequenos, do mais importante para o menos importante, e diga exatamente o que fazer:
+- Distribuição: refeição grande demais (acima de ${T.refeicaoMaxPct}% do limite de calorias) está mal distribuída; diga quanto concentrou e como dividir. Diga também se sobra pouco ou muito para o resto do dia.
+- Proteína: pouca proteína na refeição, ou proteína concentrada numa só; sugira fontes e quantidades (ex.: "+100 g de frango = 32 g").
+- Fibras: se a refeição tem pouca fibra, sugira fontes concretas (feijão, lentilha, aveia, chia, frutas com casca, verduras, legumes, pão integral).
+- Açúcar adicionado, gordura saturada e sódio: aponte excessos e a troca que resolve.
+- Ultraprocessados: aponte e sugira a versão in natura ou caseira (suplementos não entram nessa conta).
+- Qualidade: falta de verduras, legumes ou frutas (vitaminas, minerais, potássio), cálcio e ferro quando a refeição for pobre neles; hidratação quando fizer sentido.
+- Treino: pré-treino com pouca gordura e fibra e carboidrato de fácil digestão; pós-treino com 25 a 40 g de proteína e carboidrato.
+- Termine com a sugestão da próxima refeição que fecha o dia dentro dos limites e da meta de proteína e fibras.
+Se a refeição estiver ótima, diga o que está certo e o que manter.
+
+FORMATO
 Responda APENAS com um JSON válido, sem texto fora dele:
-{"resposta": "texto", "itens": [{"nome": "Ovo cozido", "quantidade": "2 unidades (100 g)", "calorias": 146, "proteina": 13.3, "gordura": 9.5, "carboidratos": 0.6, "alimento_id": null}]}`;
+{"resposta": "cálculo item a item, curto, e o total; **negrito** no total e nos itens que vieram do cadastro; se houver ambiguidade, estime e pergunte", "itens": [{"nome": "Ovo cozido", "quantidade": "2 unidades (100 g)", "calorias": 146, "proteina": 13.3, "carboidratos": 0.6, "gordura": 9.5, "fibras": 0, "acucar_adicionado": 0, "gordura_saturada": 3.1, "sodio": 140, "nova": 1, "suplemento": false, "alimento_id": null}], "dicas": ["3 a 7 dicas curtas e específicas, com números, cada uma com **negrito** no ponto principal"]}`;
+}
 
 export function foodsText(foods: Food[]): string {
   if (!foods.length) return '(nenhum alimento cadastrado)';
+  const x = (label: string, v: number | undefined, u: string) => (typeof v === 'number' ? `, ${label} ${v} ${u}` : '');
   return foods
     .map(
       (f) =>
-        `- id ${f.id} | ${f.nome}${f.apelidos ? ` (apelidos: ${f.apelidos})` : ''} | porção: ${f.porcao || `${f.porcaoQtd} ${f.porcaoUnidade}`} = ${f.porcaoQtd} ${f.porcaoUnidade} | ${f.calorias} kcal, P ${f.proteina} g, G ${f.gordura} g, C ${f.carboidratos} g${f.obs ? ` | obs: ${f.obs}` : ''}`,
+        `- id ${f.id} | ${f.nome}${f.apelidos ? ` (apelidos: ${f.apelidos})` : ''} | porção: ${f.porcao || `${f.porcaoQtd} ${f.porcaoUnidade}`} = ${f.porcaoQtd} ${f.porcaoUnidade} | ${f.calorias} kcal, P ${f.proteina} g, G ${f.gordura} g, C ${f.carboidratos} g${x('fibras', f.fibras, 'g')}${x('açúcar adicionado', f.acucar, 'g')}${x('saturada', f.saturada, 'g')}${x('sódio', f.sodio, 'mg')}${f.obs ? ` | obs: ${f.obs}` : ''}`,
     )
     .join('\n');
 }
 
 export const LABEL_SYSTEM = `Você lê a foto da tabela nutricional de um rótulo brasileiro e extrai os valores POR PORÇÃO indicada no rótulo.
 Regras:
-- Valor energético em kcal; proteínas, gorduras totais e carboidratos totais em gramas.
+- Valor energético em kcal; proteínas, gorduras totais, gorduras saturadas, carboidratos totais, açúcares adicionados e fibras alimentares em gramas; sódio em mg.
+- Use a coluna da PORÇÃO (não a de 100 g ou 100 ml), a não ser que só exista a de 100 g; nesse caso a porção é 100 g.
 - "porcao" é o texto da porção como no rótulo (ex.: "1 scoop (30 g)", "200 ml (1 copo)"); "porcao_qtd" é a quantidade em g ou ml dessa porção; "porcao_unidade" é "g", "ml" ou "un".
 - Se o nome do produto ou a marca aparecerem na foto, preencha; senão deixe "".
 - Não invente: valor que não dá para ler fica null, e explique em "obs".
-Responda APENAS com JSON: {"nome": "", "marca": "", "porcao": "", "porcao_qtd": 0, "porcao_unidade": "g", "calorias": 0, "proteina": 0, "gordura": 0, "carboidratos": 0, "obs": ""}`;
+Responda APENAS com JSON: {"nome": "", "marca": "", "porcao": "", "porcao_qtd": 0, "porcao_unidade": "g", "calorias": 0, "proteina": 0, "gordura": 0, "carboidratos": 0, "fibras": null, "acucar_adicionado": null, "gordura_saturada": null, "sodio": null, "obs": ""}`;
 
 export function labelMessages(dataUrl: string, dica: string): AIMessage[] {
   return [
@@ -283,23 +312,61 @@ export function labelMessages(dataUrl: string, dica: string): AIMessage[] {
   ];
 }
 
+function fullText(t: FullTotals): string {
+  return `${r0(t.calorias)} kcal, P ${r0(t.proteina)} g, C ${r0(t.carboidratos)} g, G ${r0(t.gordura)} g, fibras ${r1(t.fibras)} g, açúcar adicionado ${r1(t.acucar)} g, saturada ${r1(t.saturada)} g, sódio ${r0(t.sodio)} mg`;
+}
+
+function mealLine(data: AppData, m: Meal): string {
+  const t = fullTotals(m.itens);
+  const L = data.settings.limits.calorias || 1;
+  return `- ${m.hora} ${m.refeicao} (${Math.round((t.calorias / L) * 100)}% do limite de kcal): ${fullText(t)} | ${m.itens.map((i) => `${i.nome} ${i.quantidade}`).join(', ')}`;
+}
+
 export function nutriMessages(data: AppData, draft: DietDraft): AIMessage[] {
-  const consumido = dayTotals(data, draft.date);
-  const contexto = `CONTEXTO
-Data da refeição: ${draft.date} | Refeição: ${draft.refeicao}
-Limites diários: ${limitesTexto(data)}
-Já consumido no dia (refeições salvas, sem o rascunho): ${r0(consumido.calorias)} kcal, P ${r0(consumido.proteina)} g, G ${r0(consumido.gordura)} g, C ${r0(consumido.carboidratos)} g
+  const T = targets(data);
+  const salvas = mealsOf(data, draft.date).filter((m) => m.id !== draft.editingMealId);
+  const consumido = fullTotals(salvas.flatMap((m) => m.itens));
+  const restante = `kcal ${r0(T.calorias - consumido.calorias)}, carboidratos ${r0(T.carboidratos - consumido.carboidratos)} g, gordura ${r0(T.gordura - consumido.gordura)} g; faltam proteína ${r0(Math.max(0, T.proteina - consumido.proteina))} g e fibras ${r1(Math.max(0, T.fibra - consumido.fibras))} g`;
+  const alertas = draft.itens.length ? mealChecks(data, draft).map((i) => `- ${i.texto.replace(/\*\*/g, '')}`) : [];
+  const contexto = `CONTEXTO DO DIA (${draft.date}, ${weekdayName(draft.date)}), agora ${nowHHMM()}
+Refeição em edição: ${draft.refeicao} às ${draft.hora}
+Refeições já salvas no dia:
+${salvas.map((m) => mealLine(data, m)).join('\n') || '(nenhuma)'}
+Total salvo: ${fullText(consumido)}
+Resta do dia antes desta refeição: ${restante}
+Treino do dia: ${trainingOfDay(data, draft.date)}
 Itens atuais do rascunho (podem ter sido editados pelo usuário; considere-os corretos):
 ${draft.itens.length ? JSON.stringify(draft.itens.map(({ id: _id, ...i }) => i)) : '(vazio)'}
+${alertas.length ? `Alertas que o app já calculou para o rascunho atual:\n${alertas.join('\n')}` : ''}
 
 ALIMENTOS CADASTRADOS DO USUÁRIO (valores por porção)
 ${foodsText(Object.values(data.foods))}`;
 
   return [
-    { role: 'system', content: NUTRI_SYSTEM },
+    { role: 'system', content: nutriSystem(data) },
     { role: 'system', content: contexto },
     ...draft.messages.filter((m) => !m.hidden).map((m) => ({ role: m.role, content: m.content })),
   ];
+}
+
+function issuesText(issues: Issue[]): string {
+  return issues.map((i) => `- [${NIVEL_LABEL[i.nivel]}] ${i.texto.replace(/\*\*/g, '')}`).join('\n');
+}
+
+export function habitsContext(data: AppData, hoje = todayISO()): string {
+  const hs = activeHabits(data, hoje);
+  if (!hs.length) return 'HÁBITOS: nenhum hábito ativo cadastrado.';
+  const p = perfectStreak(data, hoje);
+  const linhas = hs.map((h) => {
+    const s = habitStats(data, h, hoje);
+    const ult = Array.from({ length: 14 }, (_, i) => addDays(hoje, i - 13))
+      .map((d) => (!isActiveOn(h, d) ? '-' : isDone(data, h.id, d) ? 'x' : d === hoje ? '?' : '.'))
+      .join('');
+    return `- ${h.nome}: ofensiva atual ${s.atual} dias, melhor ${s.melhor}, ${s.taxa30}% nos últimos 30 dias, hoje ${s.feitoHoje ? 'feito' : 'pendente'}; últimos 14 dias (x feito, . não feito, ? hoje) ${ult}`;
+  });
+  return `HÁBITOS DIÁRIOS (hoje ${hoje})
+Ofensiva perfeita (todos os hábitos feitos): ${p.atual} dias${p.hojeCompleto ? ', hoje completo' : ''}
+${linhas.join('\n')}`;
 }
 
 // ===================== musculação (páginas 11 e 12 do guia) =====================
@@ -375,7 +442,7 @@ ${pedido.trim() || '(nenhum)'}`;
 // ===================== resumo e chat por tela =====================
 
 export const TIPS_SYSTEM = `Você é o coach do usuário (personal trainer + nutricionista). Você recebe os dados reais de treino e alimentação do mês.
-Regras: baseie-se SOMENTE nos dados; use números (médias, dias acima do limite, % da meta de proteína, sessões feitas, cargas). Não invente. Se faltar dado, diga. Português do Brasil, frases curtas. Em cada item, destaque com **negrito** o número ou a ação mais importante. Calorias, carboidratos e gordura são LIMITES MÁXIMOS: ficar abaixo é bom e não é meta a atingir. Proteína é META: o ideal é chegar perto dela. Rascunho não salvo ainda não conta como refeição.
+Regras: baseie-se SOMENTE nos dados; use números (médias, dias acima do limite, % da meta de proteína, fibras, sódio, açúcar, distribuição das refeições, sessões feitas, cargas, ofensivas dos hábitos). Use as falhas calculadas pelo app em cada dia e aponte as que se repetem. Não invente. Se faltar dado, diga. Português do Brasil, frases curtas. Em cada item, destaque com **negrito** o número ou a ação mais importante. Calorias, carboidratos e gordura são LIMITES MÁXIMOS: ficar abaixo é bom e não é meta a atingir. Proteína é META: o ideal é chegar perto dela. Rascunho não salvo ainda não conta como refeição.
 Responda APENAS com JSON: {"bom": ["até 4 itens"], "melhorar": ["até 4 itens"], "proximos": ["até 3 ações práticas para os próximos dias"]}`;
 
 export function tipsMessages(data: AppData, month: string): AIMessage[] {
@@ -390,6 +457,8 @@ Regras:
 - Baseie-se SOMENTE nos dados fornecidos. Não invente números, pesos, séries nem refeições.
 - Cargas e metas de treino são decididas pelo app (progressão dupla). Explique-as, não proponha outras.
 - Dieta: Calorias, carboidratos e gordura são LIMITES MÁXIMOS: ficar abaixo é bom e não é meta a atingir. Proteína é META: o ideal é chegar perto dela. Rascunho não salvo ainda não conta como refeição.
+- Ao falar da dieta, seja completo como um nutricionista esportivo: distribuição das calorias entre as refeições (nenhuma deve concentrar demais), proteína por refeição, fibras, açúcar adicionado, gordura saturada, sódio, ultraprocessados, frutas, verduras e legumes, pré e pós-treino, e o que comer no resto do dia para fechar as metas. Use as falhas calculadas pelo app e dê trocas e quantidades concretas.
+- Hábitos: comente as ofensivas e os hábitos que mais falham, com uma sugestão prática para não quebrar a sequência.
 - Você não altera nada no app: sugira o que o usuário pode fazer.
 - Seja direto: frases curtas, listas com "-", sem tabelas e sem títulos com #.
 - Destaque com **negrito** (dois asteriscos) os pontos importantes: números, metas, alertas e a ação recomendada. Use negrito com moderação, no máximo um trecho por item.

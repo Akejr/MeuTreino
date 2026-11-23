@@ -1,17 +1,21 @@
 import { useState } from 'react';
 import { useAIContext } from '../components/AIChat';
+import { IssueList, QualityCard, TextList } from '../components/Analysis';
 import { ChatInput, ChatMessages } from '../components/Chat';
 import DateNav from '../components/DateNav';
 import { ask } from '../components/Dialog';
 import { IconApple, IconCoffee, IconDieta, IconMoon, IconSparkle, IconSun, IconSunrise, IconTrash, IconZap } from '../components/Icons';
 import { KcalCard, MacroGrid } from '../components/MacroBars';
-import NumberField from '../components/NumberField';
+import NumberField, { OptNumberField } from '../components/NumberField';
+import { RichInline } from '../components/RichText';
 import Segmented from '../components/Segmented';
+import { dietDay, fullTotals, mealChecks, targets } from '../lib/nutrition';
+import { normalizeDicas, normalizeNutriItems, type NutriAI } from '../lib/nutriAI';
 import { chatJSON } from '../lib/openrouter';
 import { dietContext, foodsText, nutriMessages } from '../lib/prompts';
 import { mealsOf, sumMacros } from '../lib/score';
 import { getData, setData, useData } from '../lib/storage';
-import { dayLabel, errMsg, nowHHMM, r0, r1, todayISO, uid } from '../lib/utils';
+import { dayLabel, errMsg, nowHHMM, r0, todayISO, uid } from '../lib/utils';
 import type { AppData, DietDraft, FoodItem, Macros, Meal } from '../types';
 import Alimentos from './dieta/Alimentos';
 
@@ -24,21 +28,6 @@ function refeicaoPorHora(h: number) {
   if (h < 19) return 'Lanche da tarde';
   if (h < 22) return 'Jantar';
   return 'Ceia';
-}
-
-type NutriAI = { resposta?: string; itens?: (Partial<FoodItem> & { alimento_id?: string | null })[] };
-
-function normalizeItens(itens: NutriAI['itens'], d: AppData): FoodItem[] {
-  return (Array.isArray(itens) ? itens : []).map((i) => ({
-    id: uid(),
-    nome: String(i.nome ?? 'Item'),
-    quantidade: String(i.quantidade ?? ''),
-    calorias: r1(Number(i.calorias)),
-    proteina: r1(Number(i.proteina)),
-    gordura: r1(Number(i.gordura)),
-    carboidratos: r1(Number(i.carboidratos)),
-    foodId: i.alimento_id && d.foods[i.alimento_id] ? i.alimento_id : undefined,
-  }));
 }
 
 const MEAL_ICON: Record<string, typeof IconSun> = {
@@ -68,6 +57,22 @@ function MacroChips({ m, strong }: { m: Macros; strong?: boolean }) {
       <span>P {r0(m.proteina)} g</span>
       <span>C {r0(m.carboidratos)} g</span>
       <span>G {r0(m.gordura)} g</span>
+    </div>
+  );
+}
+
+function Dicas({ dicas }: { dicas: string[] }) {
+  if (!dicas.length) return null;
+  return (
+    <div className="dicas">
+      <div className="label">Sugestões da IA</div>
+      <ul>
+        {dicas.map((t, k) => (
+          <li key={k}>
+            <RichInline text={t} />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -112,7 +117,11 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
   const totals = sumMacros(meals.flatMap((m) => m.itens));
   const draftTotals = draft ? sumMacros(draft.itens) : undefined;
   const limits = data.settings.limits;
+  const T = targets(data);
   const temAlimentos = Object.keys(data.foods).length > 0;
+  const finished = date < todayISO();
+  const analise = dietDay(data, meals, finished);
+  const draftChecks = draft && draft.itens.length ? mealChecks(data, draft) : [];
 
   function newDraft(): DietDraft {
     return { date, refeicao: refeicaoPorHora(new Date().getHours()), hora: nowHHMM(), messages: [], itens: [] };
@@ -126,16 +135,10 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
     setErro('');
     try {
       const res = await chatJSON<NutriAI>(getData(), nutriMessages(getData(), withUser));
-      const itens = normalizeItens(res.itens, getData());
-      setDraft((d) =>
-        d
-          ? {
-              ...d,
-              itens,
-              messages: [...d.messages, { role: 'assistant', content: res.resposta?.trim() || 'Cálculo atualizado.', ts: Date.now() }],
-            }
-          : d,
-      );
+      const itens = normalizeNutriItems(res.itens, getData().foods);
+      const dicas = normalizeDicas(res.dicas);
+      const resposta = typeof res.resposta === 'string' && res.resposta.trim() ? res.resposta.trim() : 'Cálculo atualizado.';
+      setDraft((d) => (d ? { ...d, itens, dicas, messages: [...d.messages, { role: 'assistant', content: resposta, ts: Date.now() }] } : d));
     } catch (e) {
       setErro(errMsg(e));
     } finally {
@@ -161,6 +164,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
       hora: draft.hora,
       itens: draft.itens,
       criadoEm: Date.now(),
+      dicas: draft.dicas?.length ? draft.dicas : undefined,
     };
     setData((d) => ({ ...d, meals: { ...d.meals, [meal.id]: meal }, dietDraft: null }));
     setDate(meal.date);
@@ -184,7 +188,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
       const ok = await ask({ title: 'Substituir o rascunho?', message: 'Já existe uma refeição em rascunho. Ela será descartada para editar esta.', confirm: 'Substituir', danger: true });
       if (!ok) return;
     }
-    setDraft(() => ({ date: m.date, refeicao: m.refeicao, hora: m.hora, editingMealId: m.id, messages: [], itens: m.itens.map((i) => ({ ...i })) }));
+    setDraft(() => ({ date: m.date, refeicao: m.refeicao, hora: m.hora, editingMealId: m.id, messages: [], itens: m.itens.map((i) => ({ ...i })), dicas: m.dicas }));
     setTimeout(() => document.getElementById('draft')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
@@ -200,6 +204,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
   const exemplos = temAlimentos
     ? ['300 ml de leite com 3 scoops de whey', '2 iogurtes', 'Sucrilhos com leite']
     : ['2 ovos mexidos e 1 pão francês', '150 g de frango e 100 g de arroz', '1 banana'];
+  const temAnalise = meals.length > 0 || finished;
 
   return (
     <>
@@ -207,10 +212,38 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
 
       <KcalCard totals={totals} limits={limits} extra={draft?.date === date ? draftTotals : undefined} />
       <MacroGrid totals={totals} limits={limits} extra={draft?.date === date ? draftTotals : undefined} />
+      {meals.length > 0 && <QualityCard t={analise.totals} T={T} />}
+
+      {temAnalise && (
+        <section className="card">
+          <div className="row between">
+            <h2 className="m0">Análise do dia</h2>
+            <span className={`badge ${analise.issues.length ? (analise.issues.some((i) => i.nivel === 3) ? 'bad' : 'ok') : 'good'}`}>
+              {analise.issues.length ? `${analise.issues.length} ${analise.issues.length === 1 ? 'falha' : 'falhas'}` : 'Sem falhas'}
+            </span>
+          </div>
+          <IssueList issues={analise.issues} />
+          {!finished && analise.pendentes.length > 0 && (
+            <>
+              <div className="label mt12">Ainda hoje</div>
+              <TextList items={analise.pendentes} kind="pendente" />
+            </>
+          )}
+          {analise.acertos.length > 0 && (
+            <>
+              <div className="label mt12">Acertos</div>
+              <TextList items={analise.acertos} kind="acerto" />
+            </>
+          )}
+          <TextList items={analise.notas} kind="nota" />
+        </section>
+      )}
 
       {meals.length > 0 && <div className="section-title">Refeições</div>}
       {meals.map((m) => {
         const t = sumMacros(m.itens);
+        const checks = mealChecks(data, m);
+        const pct = limits.calorias ? Math.round((t.calorias / limits.calorias) * 100) : 0;
         return (
           <section key={m.id} className="card meal">
             <div className="row">
@@ -218,7 +251,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
               <button className="meal-head grow" onClick={() => void editar(m)}>
                 <strong>{m.refeicao}</strong>
                 <span className="muted small">
-                  {m.hora} · {r0(t.calorias)} kcal
+                  {m.hora} · {r0(t.calorias)} kcal · {pct}% do dia
                 </span>
               </button>
               <button className="icon-btn" aria-label="Apagar refeição" onClick={() => void apagar(m)}>
@@ -230,12 +263,20 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
                 <li key={i.id}>
                   <span>
                     {i.nome} <span className="muted small">{i.quantidade}</span>
+                    {i.nova === 4 && !i.suplemento && <span className="mini-tag">ultraprocessado</span>}
                   </span>
                   <span className="muted small">{r0(i.calorias)} kcal</span>
                 </li>
               ))}
             </ul>
             <MacroChips m={t} />
+            <IssueList issues={checks} />
+            {m.dicas && m.dicas.length > 0 && (
+              <details className="dicas-details">
+                <summary>Sugestões da IA ({m.dicas.length})</summary>
+                <Dicas dicas={m.dicas} />
+              </details>
+            )}
             <button className="link small" onClick={() => void editar(m)}>
               Editar
             </button>
@@ -250,7 +291,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
           </span>
           <div className="grow">
             <h2>{draft?.editingMealId ? 'Editar refeição' : 'Adicionar refeição'}</h2>
-            <span className="muted small">A IA calcula com os seus alimentos cadastrados. Você confere e salva.</span>
+            <span className="muted small">A IA calcula com os seus alimentos cadastrados e avalia a refeição. Você confere e salva.</span>
           </div>
         </div>
         {draft && draft.date !== date && <p className="notice">Este rascunho é de {dayLabel(draft.date)} ({draft.date}).</p>}
@@ -293,7 +334,11 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
                     <IconTrash />
                   </button>
                 </div>
-                {i.foodId && data.foods[i.foodId] && <span className="tag solid self-start">Seu cadastro: {data.foods[i.foodId].nome}</span>}
+                <div className="row wrap tags-row">
+                  {i.foodId && data.foods[i.foodId] && <span className="tag solid">Seu cadastro: {data.foods[i.foodId].nome}</span>}
+                  {i.nova === 4 && !i.suplemento && <span className="tag">Ultraprocessado</span>}
+                  {i.suplemento && <span className="tag">Suplemento</span>}
+                </div>
                 <input value={i.quantidade} placeholder="Quantidade" onChange={(e) => updateItem(i.id, { quantidade: e.target.value })} />
                 <div className="grid4">
                   <NumberField label="kcal" value={i.calorias} onChange={(n) => updateItem(i.id, { calorias: n })} />
@@ -301,9 +346,23 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
                   <NumberField label="Gord" value={i.gordura} onChange={(n) => updateItem(i.id, { gordura: n })} />
                   <NumberField label="Carb" value={i.carboidratos} onChange={(n) => updateItem(i.id, { carboidratos: n })} />
                 </div>
+                <div className="grid4 extra">
+                  <OptNumberField label="Fibra" value={i.fibras} onChange={(n) => updateItem(i.id, { fibras: n })} />
+                  <OptNumberField label="Açúcar ad." value={i.acucar} onChange={(n) => updateItem(i.id, { acucar: n })} />
+                  <OptNumberField label="Saturada" value={i.saturada} onChange={(n) => updateItem(i.id, { saturada: n })} />
+                  <OptNumberField label="Sódio mg" value={i.sodio} onChange={(n) => updateItem(i.id, { sodio: n })} />
+                </div>
               </div>
             ))}
             {draftTotals && <MacroChips m={draftTotals} strong />}
+            <QualityCard t={fullTotals(draft.itens)} T={T} title="Qualidade desta refeição (o limite é do dia)" />
+            {draftChecks.length > 0 && (
+              <div className="draft-analysis">
+                <div className="label">Análise desta refeição</div>
+                <IssueList issues={draftChecks} />
+              </div>
+            )}
+            <Dicas dicas={draft.dicas ?? []} />
           </div>
         )}
 
@@ -318,12 +377,12 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
               {draft.editingMealId ? 'Cancelar' : 'Descartar'}
             </button>
           )}
-          {draft && (
-            <button className="btn primary grow" disabled={!draft.itens.length || loading} onClick={salvar}>
-              Salvar refeição
-            </button>
-          )}
         </div>
+        {draft && (
+          <button className="btn primary block" disabled={!draft.itens.length || loading} onClick={salvar}>
+            Salvar refeição
+          </button>
+        )}
       </section>
     </>
   );
