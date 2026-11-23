@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAIContext } from '../../components/AIChat';
 import { IconAlert, IconBack, IconCheck, IconPause, IconPlus, IconSkip, IconSwap } from '../../components/Icons';
-import Sheet from '../../components/Sheet';
 import { useNow } from '../../lib/hooks';
 import { showSession } from '../../lib/sessionUI';
 import { sessionContext } from '../../lib/prompts';
 import { getData, useData } from '../../lib/storage';
-import { fmtDur, todayISO, weekdayName } from '../../lib/utils';
+import { fmtDur, todayISO } from '../../lib/utils';
 import type { AppData, PlanSession, Session, SetLog } from '../../types';
 import {
   acceptOffer,
@@ -21,7 +20,6 @@ import {
   showNextAlternative,
   skipRest,
   skipStep,
-  type FinishMode,
 } from '../../training/actions';
 import { BY_ID, getEx } from '../../training/catalog';
 import {
@@ -43,6 +41,7 @@ import {
 } from '../../training/engine';
 import { planSessionOf } from '../../training/schedule';
 import { EditSetSheet, EquipmentCard, NextWeightAsk, OfferCard, PainCheckCard, PainSheet, QuestionCard, RestCard, RIR_OPTS, Stepper } from './Cards';
+import EndSheet from './EndSheet';
 import { exName, ladoLabel, loadUnit, setLine, stepLabel, tipoCurto } from './shared';
 
 function elapsedSec(s: Session, now: number) {
@@ -57,7 +56,6 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
   const now = useNow(1000, s?.status === 'em_andamento');
   const [editing, setEditing] = useState<SetLog | null>(null);
   const [endOpen, setEndOpen] = useState(false);
-  const [aviso, setAviso] = useState('');
   useAIContext(`sessao:${id}`, s ? `${s.key} · ${s.titulo}` : 'Treino', () => sessionContext(getData(), id), 1);
   const ativo = s?.status === 'em_andamento';
   // Mantém a sessão na tela depois de concluir/encerrar, para mostrar o resumo.
@@ -85,14 +83,9 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
     showSession(null);
   }
 
-  function end(mode: FinishMode) {
+  function concluir() {
     showSession(id);
-    const changes = finishSession(id, mode);
-    setEndOpen(false);
-    if (mode === 'retomar') {
-      const c = changes.find((x) => x.id === id);
-      setAviso(c ? `O restante ficou para ${weekdayName(c.para)}, ${c.para.slice(8)}/${c.para.slice(5, 7)}.` : 'O restante fica na fila para a próxima data disponível.');
-    }
+    finishSession(id);
   }
 
   return (
@@ -131,7 +124,6 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
           <p>Procure avaliação médica antes de voltar a treinar. Se a dor no peito continuar ou for forte, ligue 192 (SAMU).</p>
         </section>
       )}
-      {aviso && <p className="notice">{aviso}</p>}
 
       {passa && drop && (
         <div className="notice action">
@@ -161,7 +153,7 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
           <span className="hero-label">Tudo feito</span>
           <h2 className="hero-title">Treino completo</h2>
           <p className="hero-sub">{fmtDur(elapsed)} de treino. Confira o resumo e conclua para salvar.</p>
-          <button className="btn light block" onClick={() => end('concluir')}>
+          <button className="btn light block" onClick={concluir}>
             <IconCheck /> Concluir treino
           </button>
         </section>
@@ -174,7 +166,7 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
 
       {s.status === 'em_andamento' && (
         <button className="btn block outline mt12" onClick={() => setEndOpen(true)}>
-          Parar o treino
+          Encerrar treino
         </button>
       )}
       {s.status !== 'em_andamento' && (
@@ -183,30 +175,8 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
         </button>
       )}
 
-      <Sheet open={endOpen} onClose={() => setEndOpen(false)} title="Parar o treino">
-        <p className="muted small">
-          Feito: {done} de {steps.length} séries. Tudo o que foi confirmado já está salvo.
-        </p>
-        <div className="stack">
-          {!pend.length && (
-            <button className="btn primary block" onClick={() => end('concluir')}>
-              Concluir treino
-            </button>
-          )}
-          <button className="option strong" onClick={pausar}>
-            <span className="option-title">Pausar e continuar depois</span>
-            <span className="option-desc">O cronômetro para. Continue quando quiser, hoje ou em outro dia, do ponto onde parou.</span>
-          </button>
-          <button className="option" onClick={() => end('encerrar')}>
-            <span className="option-title">Encerrar com o realizado</span>
-            <span className="option-desc">O que faltou não volta para a agenda.</span>
-          </button>
-          <button className="option" onClick={() => end('retomar')}>
-            <span className="option-title">Retomar o restante em outra data</span>
-            <span className="option-desc">A mesma sessão volta para a fila, mantendo o que já foi feito.</span>
-          </button>
-        </div>
-      </Sheet>
+      <EndSheet data={data} s={s} open={endOpen} onClose={() => setEndOpen(false)} />
+
       <EditSetSheet set={editing} onClose={() => setEditing(null)} />
     </div>
   );

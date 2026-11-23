@@ -71,6 +71,7 @@ export function startSession(id: string) {
             inicio: s.inicio ?? now,
             dataReal: s.dataReal ?? hoje,
             intervalos: [...s.intervalos, { i: now }],
+            antes: s.antes ?? { equipment: d.equipment, respostas: d.settings.training.respostas, naoGosto: d.settings.training.naoGosto },
           },
     );
   });
@@ -82,24 +83,49 @@ export function pauseSession(id: string) {
   setData((d) => patchSession(d, id, (s) => (s.status === 'em_andamento' && !isPaused(s) ? closeInterval(s, now) : s)));
 }
 
-export type FinishMode = 'concluir' | 'encerrar' | 'retomar';
-
-export function finishSession(id: string, mode: FinishMode): Change[] {
+/** Encerra e conta como treino feito, mesmo com exercícios faltando. As séries registradas ficam salvas. */
+export function finishSession(id: string) {
   const now = Date.now();
-  let changes: Change[] = [];
+  setData((d) =>
+    patchSession(d, id, (s) => {
+      const { antes: _antes, ...c } = closeInterval(s, now);
+      return { ...c, fim: now, status: 'concluida', retomar: false };
+    }),
+  );
+}
+
+/**
+ * Encerra e perde o progresso: apaga as séries desta sessão e tudo volta como estava antes de começar
+ * (sessão pendente na mesma data, aparelhos e variações cadastrados durante o treino desfeitos).
+ */
+export function discardSession(id: string) {
   setData((d) => {
-    let next = patchSession(d, id, (s) => {
-      const c = closeInterval(s, now);
-      return { ...c, fim: now, status: mode === 'concluir' ? 'concluida' : 'parcial', retomar: mode === 'retomar' };
-    });
-    if (mode === 'retomar') {
-      const plan = computeReschedule(next, todayISO(), { from: addDays(todayISO(), 1), retomarIds: [id] });
-      changes = plan.changes;
-      next = applyChanges(next, plan.changes);
+    const s = d.sessions[id];
+    if (!s) return d;
+    const sets = { ...d.sets };
+    for (const k of Object.keys(sets)) if (sets[k].sessionId === id) delete sets[k];
+    const limpa: Session = {
+      id: s.id,
+      planId: s.planId,
+      key: s.key,
+      titulo: s.titulo,
+      dataOriginal: s.dataOriginal,
+      dataAtual: s.dataAtual,
+      status: 'pendente',
+      intervalos: [],
+      slots: {},
+      historicoDatas: s.historicoDatas,
+    };
+    let next: AppData = { ...d, sets, sessions: { ...d.sessions, [id]: limpa } };
+    if (s.antes) {
+      next = {
+        ...next,
+        equipment: s.antes.equipment,
+        settings: { ...next.settings, training: { ...next.settings.training, respostas: s.antes.respostas, naoGosto: s.antes.naoGosto } },
+      };
     }
     return next;
   });
-  return changes;
 }
 
 export interface ConfirmValues {

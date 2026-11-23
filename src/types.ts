@@ -209,6 +209,8 @@ export interface Session extends Synced {
   descansoAte?: number;
   descansoSeg?: number;
   historicoDatas: MudancaData[];
+  /** Como estavam aparelhos e catálogo ao começar (para 'encerrar e perder progresso'). */
+  antes?: { equipment: Record<string, Equipment>; respostas: Record<string, string[]>; naoGosto: string[] };
   /** Só na tela: sessão prevista pela ficha numa semana que ainda não foi criada. */
   virtual?: boolean;
 }

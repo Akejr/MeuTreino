@@ -7,11 +7,12 @@ import { trainingContext } from '../lib/prompts';
 import { getData, useData } from '../lib/storage';
 import { dayLabel, dow, formatShort, todayISO, weekdayName, WEEKDAY_SHORT } from '../lib/utils';
 import type { AppData, Session } from '../types';
-import { applyReschedule, ensureTraining, finishSession, markNoMakeup, moveTo, setSlotStatus, skipToday, startSession } from '../training/actions';
+import { applyReschedule, ensureTraining, markNoMakeup, moveTo, setSlotStatus, skipToday, startSession } from '../training/actions';
 import { getEx, resolveExercise } from '../training/catalog';
 import { dropCandidate, estimateSession, exposures, fmtW, medianDuration, slotActive, stepCtx, suggestNext, unitOf } from '../training/engine';
 import { computeReschedule, inQueue, isPaused, nextSession, openFromPast, overdue, planSessionOf, queue, weekView, type Change } from '../training/schedule';
 import Agenda from './treino/Agenda';
+import EndSheet from './treino/EndSheet';
 import Ficha from './treino/Ficha';
 import { MovePicker } from './treino/MovePicker';
 import SessionPreview from './treino/SessionPreview';
@@ -54,6 +55,7 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
   const [resched, setResched] = useState<{ changes: Change[]; mensagem: string; avisos: string[] } | null>(null);
   const [mover, setMover] = useState<Session | null>(null);
   const [preview, setPreview] = useState<Session | null>(null);
+  const [encerrar, setEncerrar] = useState<Session | null>(null);
   const [msg, setMsg] = useState('');
   const atrasadas = overdue(data, hoje);
   const passada = openFromPast(data, hoje);
@@ -82,8 +84,8 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
               <button className="btn small primary" onClick={() => startSession(passada.id)}>
                 Continuar
               </button>
-              <button className="btn small" onClick={() => finishSession(passada.id, 'encerrar')}>
-                Encerrar com o realizado
+              <button className="btn small" onClick={() => setEncerrar(passada)}>
+                Encerrar
               </button>
             </div>
           </div>
@@ -122,7 +124,7 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
           <p className="muted small">Veja a ficha ou a agenda para planejar a semana.</p>
         </section>
       ) : (
-        <NextCard data={data} s={next} hoje={hoje} onMove={() => setMover(next)} onSkipToday={() => mostrar(skipToday(next.id))} />
+        <NextCard data={data} s={next} hoje={hoje} onMove={() => setMover(next)} onSkipToday={() => mostrar(skipToday(next.id))} onEnd={() => setEncerrar(next)} />
       )}
 
       {next && ps && <ExerciseList data={data} s={next} hoje={hoje} />}
@@ -191,6 +193,8 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
         )}
       </Sheet>
 
+      {encerrar && data.sessions[encerrar.id] && <EndSheet data={data} s={data.sessions[encerrar.id]} open onClose={() => setEncerrar(null)} />}
+
       <SessionPreview
         data={data}
         s={preview}
@@ -220,7 +224,7 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
   );
 }
 
-function NextCard({ data, s, hoje, onMove, onSkipToday }: { data: AppData; s: Session; hoje: string; onMove: () => void; onSkipToday: () => void }) {
+function NextCard({ data, s, hoje, onMove, onSkipToday, onEnd }: { data: AppData; s: Session; hoje: string; onMove: () => void; onSkipToday: () => void; onEnd: () => void }) {
   const ps = planSessionOf(data, s)!;
   const t = data.settings.training;
   const pausado = isPaused(s);
@@ -278,8 +282,8 @@ function NextCard({ data, s, hoje, onMove, onSkipToday }: { data: AppData; s: Se
         <IconPlay /> {pausado ? 'Continuar treino' : s.retomar ? 'Retomar o restante' : 'Iniciar treino'}
       </button>
       {pausado && (
-        <button className="btn ghost-light block mt8" onClick={() => finishSession(s.id, 'encerrar')}>
-          Encerrar com o realizado
+        <button className="btn ghost-light block mt8" onClick={onEnd}>
+          Encerrar treino
         </button>
       )}
       {s.status !== 'em_andamento' && (

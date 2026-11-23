@@ -2250,3 +2250,10 @@ details.advanced[open] > summary .chev {
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+.option.danger-option {
+  border-color: var(--day-bad);
+}
+.option.danger-option .option-title {
+  color: var(--day-bad);
+}
+
