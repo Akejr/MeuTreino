@@ -33,6 +33,7 @@ export const TABLES: Record<string, string> = {
   sets: 'workout_sets',
   habits: 'habits',
   habitChecks: 'habit_checks',
+  cardio: 'cardio_sessions',
 };
 
 export interface SyncRow {

@@ -12,6 +12,7 @@ import { getEx, resolveExercise } from '../training/catalog';
 import { dropCandidate, estimateSession, exposures, fmtW, medianDuration, slotActive, stepCtx, suggestNext, unitOf } from '../training/engine';
 import { computeReschedule, inQueue, isPaused, nextSession, openFromPast, overdue, planSessionOf, queue, weekView, type Change } from '../training/schedule';
 import Agenda from './treino/Agenda';
+import { CardioSection } from './treino/Cardio';
 import EndSheet from './treino/EndSheet';
 import Ficha from './treino/Ficha';
 import { MovePicker } from './treino/MovePicker';
@@ -128,6 +129,8 @@ function Proximo({ data, hoje, onAgenda }: { data: AppData; hoje: string; onAgen
       )}
 
       {next && ps && <ExerciseList data={data} s={next} hoje={hoje} />}
+
+      <CardioSection data={data} hoje={hoje} />
 
       {proximos.length > 0 && (
         <>

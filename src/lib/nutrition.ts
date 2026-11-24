@@ -1,6 +1,6 @@
 /**
- * Análise da alimentação calculada pelo app (funciona sem internet). A IA recebe estes fatos
- * e escreve as sugestões; os alertas mostrados na tela saem daqui.
+ * Análise da alimentação calculada pelo app (funciona sem internet). Os alertas mostrados na tela saem daqui.
+ * Fibras, sódio, açúcar adicionado, saturada e ultraprocessados são só acompanhamento: não contam como falha.
  *
  * Referências usadas nos limites:
  * - Proteína por refeição ~0,4 g/kg (mín. ~0,25 g/kg) em 3–4 refeições (Schoenfeld & Aragon, 2018).
@@ -119,7 +119,7 @@ export interface MealLike {
   itens: FoodItem[];
 }
 
-/** Alertas de uma refeição (distribuição, proteína, fibras, sódio, açúcar, ultraprocessados). */
+/** Alertas de uma refeição (distribuição, proteína, gordura, carboidrato, pré-treino). A qualidade fica em mealQuality. */
 export function mealChecks(d: AppData, m: MealLike): Issue[] {
   const T = targets(d);
   const t = fullTotals(m.itens);
@@ -145,16 +145,23 @@ export function mealChecks(d: AppData, m: MealLike): Issue[] {
   if (T.gordura && t.gordura > T.gordura * 0.5) add(1, `**${f0(t.gordura)} g de gordura**: mais da metade do limite do dia (${T.gordura} g) numa refeição.`);
   if (T.carboidratos && t.carboidratos > T.carboidratos * 0.5) add(1, `**${f0(t.carboidratos)} g de carboidratos**: mais da metade do limite do dia numa refeição.`);
 
-  if (T.sodio && t.sodio > T.sodio * 0.4) add(t.sodio > T.sodio * 0.6 ? 2 : 1, `Sódio alto: **${f0(t.sodio)} mg** (${Math.round((t.sodio / T.sodio) * 100)}% do limite do dia).`);
-  if (T.acucar && t.acucar > T.acucar * 0.6) add(t.acucar > T.acucar ? 2 : 1, `Açúcar adicionado: **${f1(t.acucar)} g** (limite do dia ${T.acucar} g).`);
-  if (T.saturada && t.saturada > T.saturada * 0.5) add(1, `Gordura saturada: **${f1(t.saturada)} g**, mais da metade do limite do dia (${T.saturada} g).`);
+  return out;
+}
 
-  if ((m.refeicao === 'Almoço' || m.refeicao === 'Jantar') && confiavel(t.cobertura.fibras) && t.fibras < 5) {
-    add(1, `Pouca fibra: **${f1(t.fibras)} g**. Inclua salada, legumes, feijão ou uma fruta.`);
-  }
-  if (t.novaKcal >= 150 && t.ultraKcal / t.novaKcal > 0.5) {
-    add(1, `**${Math.round((t.ultraKcal / t.novaKcal) * 100)}% das calorias** vêm de ultraprocessados: prefira versões in natura ou caseiras.`);
-  }
+/**
+ * Qualidade de uma refeição (sódio, açúcar adicionado, saturada, fibras, ultraprocessados).
+ * Só acompanhamento: não conta como falha.
+ */
+export function mealQuality(d: AppData, m: MealLike): string[] {
+  const T = targets(d);
+  const t = fullTotals(m.itens);
+  const out: string[] = [];
+  if (!m.itens.length || t.calorias <= 0) return out;
+  if (T.sodio && t.sodio > T.sodio * 0.4) out.push(`Sódio: **${f0(t.sodio)} mg** (${Math.round((t.sodio / T.sodio) * 100)}% do alvo do dia).`);
+  if (T.acucar && t.acucar > T.acucar * 0.6) out.push(`Açúcar adicionado: **${f1(t.acucar)} g** (alvo do dia até ${T.acucar} g).`);
+  if (T.saturada && t.saturada > T.saturada * 0.5) out.push(`Gordura saturada: **${f1(t.saturada)} g**, mais da metade do alvo do dia (${T.saturada} g).`);
+  if ((m.refeicao === 'Almoço' || m.refeicao === 'Jantar') && confiavel(t.cobertura.fibras) && t.fibras < 5) out.push(`Fibra: **${f1(t.fibras)} g**. Salada, legumes, feijão ou uma fruta aumentam.`);
+  if (t.novaKcal >= 150 && t.ultraKcal / t.novaKcal > 0.5) out.push(`**${Math.round((t.ultraKcal / t.novaKcal) * 100)}% das calorias** de ultraprocessados.`);
   return out;
 }
 
@@ -167,6 +174,8 @@ export interface DietDay {
   acertos: string[];
   /** Observações sem penalidade (ex.: dados faltando). */
   notas: string[];
+  /** Qualidade (fibras, sódio, açúcar adicionado, saturada, ultraprocessados): só acompanhamento, não muda a nota do dia. */
+  acompanhamento: string[];
   totals: FullTotals;
 }
 
@@ -190,13 +199,14 @@ export function dietDay(d: AppData, meals: Meal[], finished: boolean): DietDay {
   const pendentes: string[] = [];
   const acertos: string[] = [];
   const notas: string[] = [];
+  const acompanhamento: string[] = [];
   const add = (nivel: Nivel, texto: string) => issues.push({ area: 'dieta', nivel, texto });
   const push = (i: Issue | null) => i && issues.push(i);
 
   if (!meals.length) {
     if (finished) add(3, 'Nenhuma refeição registrada.');
     else pendentes.push('Nenhuma refeição registrada ainda.');
-    return { issues, pendentes, acertos, notas, totals: t };
+    return { issues, pendentes, acertos, notas, acompanhamento, totals: t };
   }
 
   if (finished && meals.length === 1) add(2, 'Só **1 refeição** registrada: o registro do dia parece incompleto.');
@@ -225,25 +235,22 @@ export function dietDay(d: AppData, meals: Meal[], finished: boolean): DietDay {
     add(1, `Gordura muito baixa: **${f0(t.gordura)} g**. Fique perto de ${T.gorduraMin} g ou mais (cerca de 0,5 g/kg) pela saúde hormonal.`);
   }
 
-  // fibras (mínimo)
+  // qualidade: só acompanhamento (não é falha e não muda a nota do dia)
+  const q = (texto: string) => acompanhamento.push(texto);
   if (T.fibra) {
     const cob = confiavel(t.cobertura.fibras);
-    if (t.fibras >= T.fibra) acertos.push(`Fibras na meta (${f1(t.fibras)} g).`);
-    else if (!cob) notas.push(`Fibras sem dado em parte dos itens (somam ${f1(t.fibras)} g conhecidos).`);
-    else if (!finished) pendentes.push(`Faltam **${f1(T.fibra - t.fibras)} g de fibras**.`);
-    else add(t.fibras < T.fibra * 0.5 ? 2 : 1, `Fibras baixas: **${f1(t.fibras)} de ${T.fibra} g**. Inclua feijão, aveia, frutas com casca, verduras e legumes.`);
+    if (t.fibras >= T.fibra) q(`Fibras na meta: ${f1(t.fibras)} g.`);
+    else if (!cob) q(`Fibras sem dado em parte dos itens (somam ${f1(t.fibras)} g conhecidos).`);
+    else if (!finished) q(`Fibras: ${f1(t.fibras)} de ${T.fibra} g até agora.`);
+    else q(`Fibras: **${f1(t.fibras)} de ${T.fibra} g**. Feijão, aveia, frutas com casca, verduras e legumes aumentam.`);
   }
-
-  // excessos de qualidade (contam mesmo com o dia em andamento)
-  if (T.sodio && t.sodio > T.sodio * 1.01) add(t.sodio > T.sodio * 1.5 ? 2 : 1, `Sódio acima do limite: **${f0(t.sodio)} mg** (limite ${f0(T.sodio)} mg).`);
-  else if (finished && confiavel(t.cobertura.sodio)) acertos.push(`Sódio dentro do limite (${f0(t.sodio)} mg).`);
-  if (T.acucar && t.acucar > T.acucar * 1.01) add(t.acucar > T.acucar * 2 ? 2 : 1, `Açúcar adicionado acima do limite: **${f1(t.acucar)} g** (limite ${T.acucar} g).`);
-  if (T.saturada && t.saturada > T.saturada * 1.01) add(t.saturada > T.saturada * 1.5 ? 2 : 1, `Gordura saturada acima do limite: **${f1(t.saturada)} g** (limite ${T.saturada} g).`);
-
+  if (T.sodio && t.sodio > T.sodio * 1.01) q(`Sódio: **${f0(t.sodio)} mg** (alvo até ${f0(T.sodio)} mg).`);
+  else if (finished && confiavel(t.cobertura.sodio)) q(`Sódio dentro do alvo: ${f0(t.sodio)} mg.`);
+  if (T.acucar && t.acucar > T.acucar * 1.01) q(`Açúcar adicionado: **${f1(t.acucar)} g** (alvo até ${T.acucar} g).`);
+  if (T.saturada && t.saturada > T.saturada * 1.01) q(`Gordura saturada: **${f1(t.saturada)} g** (alvo até ${T.saturada} g).`);
   if (finished && t.calorias >= 800 && t.novaKcal >= t.calorias * 0.6) {
     const share = t.ultraKcal / t.novaKcal;
-    if (share > 0.2) add(share > 0.4 ? 2 : 1, `**${Math.round(share * 100)}% das calorias** vieram de ultraprocessados (sem contar suplementos). Mire abaixo de 20%.`);
-    else acertos.push('Poucos ultraprocessados.');
+    q(share > 0.2 ? `Ultraprocessados: **${Math.round(share * 100)}% das calorias** (sem contar suplementos; alvo abaixo de 20%).` : `Poucos ultraprocessados: ${Math.round(share * 100)}% das calorias.`);
   }
 
   // distribuição ao longo do dia
@@ -264,5 +271,5 @@ export function dietDay(d: AppData, meals: Meal[], finished: boolean): DietDay {
       if (gap > 6 * 60) add(1, `Intervalo longo sem comer: **${Math.floor(gap / 60)} h** entre ${horas[i - 1]} e ${horas[i]}.`);
     }
   }
-  return { issues, pendentes, acertos, notas, totals: t };
+  return { issues, pendentes, acertos, notas, acompanhamento, totals: t };
 }

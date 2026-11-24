@@ -97,6 +97,7 @@ export function migrate(raw: unknown): AppData | null {
     sets: d.sets ?? {},
     habits: d.habits ?? {},
     habitChecks: d.habitChecks ?? {},
+    cardio: d.cardio ?? {},
     aiChats: d.aiChats ?? {},
     tips: d.tips ?? {},
     sync: { ...def.sync, ...d.sync },

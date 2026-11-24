@@ -1,6 +1,9 @@
 import { activeHabits, habitStats, isActiveOn, isDone, perfectStreak } from '../habits/habits';
 import type { AppData, ChatMsg, DietDraft, Food, Meal, PlanVersion, Session } from '../types';
-import { dietDay, fullTotals, mealChecks, NIVEL_LABEL, targets, type FullTotals, type Issue } from './nutrition';
+import { dietDay, fullTotals, NIVEL_LABEL, targets, type FullTotals, type Issue } from './nutrition';
+import { cardioBetween, cardioOn } from '../cardio/cardio';
+import { coachReport, coachText } from '../coach/coach';
+import { bodyOf, cardioDef, estimateCardio } from '../coach/energy';
 import { BY_ID, CATALOG, getEx, GRUPO_LABEL, isActive, QUESTIONS, resolveExercise } from '../training/catalog';
 import {
   estimateSession,
@@ -90,6 +93,11 @@ export function trainingContext(data: AppData, hoje = todayISO()): string {
   return `FICHA ATIVA: ${plan ? `${plan.nome} (v${plan.versao})` : 'nenhuma'}
 VOLUME PREVISTO POR SEMANA: ${plan ? volumeTexto(planVolume(plan, data.settings.training)) : '-'}
 VOLUME FEITO NESTA SEMANA: ${volumeTexto(feito) || 'nada ainda'}
+CARDIO NOS ÚLTIMOS 7 DIAS: ${
+    cardioBetween(data, addDays(hoje, -6), hoje)
+      .map((c) => `${c.date} ${cardioLinha(data, c)}`)
+      .join('; ') || 'nenhum registrado'
+  }
 
 AGENDA DA SEMANA
 ${semana}
@@ -174,16 +182,25 @@ FALHAS CALCULADAS PELO APP
 ${issuesText(ev.issues.filter((i) => i.area === 'dieta')) || '(nenhuma)'}
 AINDA FALTA HOJE: ${diet.pendentes.join(' ').replace(/\*\*/g, '') || '-'}
 ACERTOS: ${diet.acertos.join(' ') || '-'}
+QUALIDADE (só acompanhamento, não muda a nota do dia): ${diet.acompanhamento.join(' ').replace(/\*\*/g, '') || '-'}
 ${diet.notas.length ? `OBS: ${diet.notas.join(' ')}` : ''}
 TREINO DO DIA: ${trainingOfDay(data, date)}
 ALIMENTOS CADASTRADOS: ${Object.values(data.foods).map((f) => f.nome).join(', ') || 'nenhum'}`;
 }
 
+/** "Esteira inclinada 30 min moderada (~250 kcal)". */
+export function cardioLinha(data: AppData, c: ReturnType<typeof cardioOn>[number]): string {
+  const est = estimateCardio(c, bodyOf(data.settings.profile));
+  return `${cardioDef(c.tipo).label} ${c.minutos} min ${est.intensidade} às ${c.hora} (~${r0(est.kcal)} kcal)`;
+}
+
 function trainingOfDay(data: AppData, date: string): string {
   const ev = evaluateDay(data, date);
-  if (ev.treinos.length) return ev.treinos.map((s) => `${s.key} ${s.titulo} (${s.status})`).join(', ');
+  const cardio = cardioOn(data, date);
+  const c = cardio.length ? `; cardio: ${cardio.map((x) => cardioLinha(data, x)).join(', ')}` : '; sem cardio registrado';
+  if (ev.treinos.length) return ev.treinos.map((s) => `${s.key} ${s.titulo} (${s.status})`).join(', ') + c;
   const plan = Object.values(data.sessions).find((s) => s.dataAtual === date && s.status === 'pendente');
-  return plan ? `${plan.key} ${plan.titulo} marcado` : 'nenhum';
+  return (plan ? `${plan.key} ${plan.titulo} marcado` : 'nenhuma musculação') + c;
 }
 
 export function monthContext(data: AppData, month: string, selected?: string): string {
@@ -207,6 +224,8 @@ export function monthContext(data: AppData, month: string, selected?: string): s
         acucar: r1(q.acucar),
         refeicoes: ev.meals.length,
         treino: ev.treinos.map((s) => `${s.key} ${s.status}`).join(', ') || (ev.faltas.length ? 'falta' : 'nenhum'),
+        cardio: ev.cardio.map((c) => cardioLinha(data, c)).join(', ') || 'nenhum',
+        qualidade_acompanhamento: ev.acompanhamento.map((x) => x.replace(/\*\*/g, '')),
       };
     })
     .filter(Boolean);
@@ -249,7 +268,7 @@ Equipamentos cadastrados: ${Object.values(data.equipment).length}`;
 export function nutriSystem(data: AppData): string {
   const T = targets(data);
   const p = data.settings.profile;
-  return `Você é um nutricionista esportivo. Calcula e AVALIA cada refeição que o usuário registra, pensando no dia inteiro.
+  return `Você é um nutricionista esportivo. Calcula cada refeição que o usuário registra (as dicas e a avaliação ficam com o coach do app, não com você).
 Usuário: ${p.sexo || 'adulto'}, ${p.idade || '?'} anos, ${p.peso || '?'} kg, ${p.altura || '?'} cm, ${p.nivel || ''}. Objetivo: ${p.objetivo || 'saúde'}. Treina musculação 5 vezes por semana.
 Metas do dia: calorias até ${T.calorias} kcal, proteína ${T.proteina} g (META), carboidratos até ${T.carboidratos} g, gordura até ${T.gordura} g (mínimo saudável ~${T.gorduraMin} g), fibras ${T.fibra} g ou mais, açúcar adicionado até ${T.acucar} g, gordura saturada até ${T.saturada} g, sódio até ${T.sodio} mg. Proteína por refeição principal: ~${T.protRefeicao} g (mínimo ${T.protMin} g). Nenhuma refeição deve passar de ${T.refeicaoMaxPct}% do limite de calorias.
 
@@ -263,21 +282,9 @@ CÁLCULO
 - Para cada item: calorias (kcal); proteina, carboidratos, gordura, fibras, acucar_adicionado e gordura_saturada em gramas (1 casa decimal); sodio em mg (inteiro); nova = classificação NOVA do Guia Alimentar (1 in natura ou minimamente processado, 2 ingrediente culinário como óleo, açúcar e sal, 3 processado, 4 ultraprocessado); suplemento = true para whey, caseína, albumina, creatina e similares.
 - Açúcar adicionado é só o colocado no preparo ou pelo fabricante (açúcar, mel, xarope, achocolatado). O açúcar natural da fruta e do leite não conta.
 
-AVALIAÇÃO (campo "dicas")
-Olhe a refeição dentro do dia: o que já foi comido, o horário, o treino do dia e quanto ainda resta. Aponte TODOS os problemas, mesmo pequenos, do mais importante para o menos importante, e diga exatamente o que fazer:
-- Distribuição: refeição grande demais (acima de ${T.refeicaoMaxPct}% do limite de calorias) está mal distribuída; diga quanto concentrou e como dividir. Diga também se sobra pouco ou muito para o resto do dia.
-- Proteína: pouca proteína na refeição, ou proteína concentrada numa só; sugira fontes e quantidades (ex.: "+100 g de frango = 32 g").
-- Fibras: se a refeição tem pouca fibra, sugira fontes concretas (feijão, lentilha, aveia, chia, frutas com casca, verduras, legumes, pão integral).
-- Açúcar adicionado, gordura saturada e sódio: aponte excessos e a troca que resolve.
-- Ultraprocessados: aponte e sugira a versão in natura ou caseira (suplementos não entram nessa conta).
-- Qualidade: falta de verduras, legumes ou frutas (vitaminas, minerais, potássio), cálcio e ferro quando a refeição for pobre neles; hidratação quando fizer sentido.
-- Treino: pré-treino com pouca gordura e fibra e carboidrato de fácil digestão; pós-treino com 25 a 40 g de proteína e carboidrato.
-- Termine com a sugestão da próxima refeição que fecha o dia dentro dos limites e da meta de proteína e fibras.
-Se a refeição estiver ótima, diga o que está certo e o que manter.
-
 FORMATO
 Responda APENAS com um JSON válido, sem texto fora dele:
-{"resposta": "cálculo item a item, curto, e o total; **negrito** no total e nos itens que vieram do cadastro; se houver ambiguidade, estime e pergunte", "itens": [{"nome": "Ovo cozido", "quantidade": "2 unidades (100 g)", "calorias": 146, "proteina": 13.3, "carboidratos": 0.6, "gordura": 9.5, "fibras": 0, "acucar_adicionado": 0, "gordura_saturada": 3.1, "sodio": 140, "nova": 1, "suplemento": false, "alimento_id": null}], "dicas": ["3 a 7 dicas curtas e específicas, com números, cada uma com **negrito** no ponto principal"]}`;
+{"resposta": "cálculo item a item, curto, e o total; **negrito** no total e nos itens que vieram do cadastro; se houver ambiguidade, estime e pergunte", "itens": [{"nome": "Ovo cozido", "quantidade": "2 unidades (100 g)", "calorias": 146, "proteina": 13.3, "carboidratos": 0.6, "gordura": 9.5, "fibras": 0, "acucar_adicionado": 0, "gordura_saturada": 3.1, "sodio": 140, "nova": 1, "suplemento": false, "alimento_id": null}]}`;
 }
 
 export function foodsText(foods: Food[]): string {
@@ -361,7 +368,6 @@ export function nutriMessages(data: AppData, draft: DietDraft): AIMessage[] {
   const salvas = mealsOf(data, draft.date).filter((m) => m.id !== draft.editingMealId);
   const consumido = fullTotals(salvas.flatMap((m) => m.itens));
   const restante = `kcal ${r0(T.calorias - consumido.calorias)}, carboidratos ${r0(T.carboidratos - consumido.carboidratos)} g, gordura ${r0(T.gordura - consumido.gordura)} g; faltam proteína ${r0(Math.max(0, T.proteina - consumido.proteina))} g e fibras ${r1(Math.max(0, T.fibra - consumido.fibras))} g`;
-  const alertas = draft.itens.length ? mealChecks(data, draft).map((i) => `- ${i.texto.replace(/\*\*/g, '')}`) : [];
   const contexto = `CONTEXTO DO DIA (${draft.date}, ${weekdayName(draft.date)}), agora ${nowHHMM()}
 Refeição em edição: ${draft.refeicao} às ${draft.hora}
 Refeições já salvas no dia:
@@ -371,7 +377,6 @@ Resta do dia antes desta refeição: ${restante}
 Treino do dia: ${trainingOfDay(data, draft.date)}
 Itens atuais do rascunho (podem ter sido editados pelo usuário; considere-os corretos):
 ${draft.itens.length ? JSON.stringify(draft.itens.map(({ id: _id, ...i }) => i)) : '(vazio)'}
-${alertas.length ? `Alertas que o app já calculou para o rascunho atual:\n${alertas.join('\n')}` : ''}
 
 ALIMENTOS CADASTRADOS DO USUÁRIO (valores por porção)
 ${foodsText(Object.values(data.foods))}`;
@@ -473,41 +478,76 @@ ${pedido.trim() || '(nenhum)'}`;
   ];
 }
 
-// ===================== resumo e chat por tela =====================
+// ===================== coach (botão flutuante e resumo do mês) =====================
 
-export const TIPS_SYSTEM = `Você é o coach do usuário (personal trainer + nutricionista). Você recebe os dados reais de treino e alimentação do mês.
-Regras: baseie-se SOMENTE nos dados; use números (médias, dias acima do limite, % da meta de proteína, fibras, sódio, açúcar, distribuição das refeições, sessões feitas, cargas, ofensivas dos hábitos). Use as falhas calculadas pelo app em cada dia e aponte as que se repetem. Não invente. Se faltar dado, diga. Português do Brasil, frases curtas. Em cada item, destaque com **negrito** o número ou a ação mais importante. Calorias, carboidratos e gordura são LIMITES MÁXIMOS: ficar abaixo é bom e não é meta a atingir. Proteína é META: o ideal é chegar perto dela. Rascunho não salvo ainda não conta como refeição.
-Responda APENAS com JSON: {"bom": ["até 4 itens"], "melhorar": ["até 4 itens"], "proximos": ["até 3 ações práticas para os próximos dias"]}`;
+const COACH_RULES = `COMO USAR OS DADOS
+- A "ANÁLISE DO COACH" é calculada pelo app com regras baseadas em estudos, com o porquê e a fonte de cada ponto. Use os números e as fontes dela. Nunca invente estudos, números, refeições, séries ou cardio. Ao citar evidência, use só as fontes que aparecem nos dados, de forma curta e humana ("uma meta-análise de 2018 com 49 estudos mostrou que...").
+- Gasto calórico, déficit, gordura corporal e kcal do cardio são ESTIMATIVAS com erro de 10 a 20%: trate como tendência, nunca como valor exato. A média semanal da balança é a referência final.
+- Calorias, carboidratos e gordura são LIMITES MÁXIMOS; proteína é META. Rascunho não salvo ainda não é refeição.
+- A qualidade da dieta (fibras, sódio, açúcar adicionado, saturada, ultraprocessados) NÃO muda a nota do dia no calendário: é acompanhamento. Comente quando fizer diferença para o objetivo, sem chamar de falha.
+- Cargas e séries são decididas pelo app (progressão dupla e ajuste dentro da sessão). Explique, não proponha outras.
+- Se faltar dado (refeição ou cardio não registrado, sono, passos, peso), diga o que falta. Faça no máximo uma pergunta por resposta.
 
-export function tipsMessages(data: AppData, month: string): AIMessage[] {
-  return [
-    { role: 'system', content: TIPS_SYSTEM },
-    { role: 'user', content: monthContext(data, month) },
-  ];
+COMO PENSAR (sempre no conjunto)
+- O cardio muda o gasto do dia, a fome, a necessidade de carboidrato e proteína, a hidratação e a recuperação das pernas para o treino seguinte. Leve isso em conta em TODA análise, de qualquer tela.
+- Muito cardio com comida ruim, pouca comida ou comida demais é ponto principal: diga claramente e diga o que fazer.
+- Ordem de importância: segurança > alertas > energia do dia e da semana > proteína > consistência do treino e do cardio > sono e recuperação > qualidade da comida > detalhes.
+- Traga sempre pelo menos um ponto que ele provavelmente não pensou, tirado da análise (ex.: cardio intenso na véspera do treino de pernas, comer de volta as calorias do cardio, fim de semana apagando o déficit, cafeína à tarde, álcool, proteína antes de dormir, sono no déficit, hábito marcado que não bate com o que comeu, painel da esteira exagerando as calorias).
+
+SEGURANÇA
+Dor no peito, desmaio ou falta de ar incomum: parar e procurar avaliação; sintomas intensos: SAMU 192. Você não diagnostica lesões nem substitui médico ou nutricionista.
+
+FORMATO
+Português do Brasil, frases curtas, listas com "-", sem tabelas e sem títulos com #. **Negrito** (dois asteriscos) com moderação, nos números e nas ações. Em conversa, responda em até ~10 linhas, a menos que ele peça detalhe. Você não altera nada no app: diga o que ele pode fazer.`;
+
+function coachPersona(data: AppData): string {
+  const p = data.settings.profile;
+  const nome = p.nome.trim().split(' ')[0] || 'o usuário';
+  return `Você é o coach pessoal de ${nome} no app Meu Treino: personal trainer e nutricionista esportivo ao mesmo tempo, acompanhando musculação, cardio, alimentação e hábitos juntos. Objetivo dele: ${p.objetivo || 'saúde'}.
+Fale como um coach de verdade: próximo, direto, honesto e motivador. Chame pelo nome de vez em quando. Reconheça o que ele fez bem para ele continuar, aponte o que melhorar com a ação concreta (quanto, quando, como) e explique o porquê em uma frase. Não seja genérico: cada ponto usa um número dos dados dele.`;
 }
 
-export const SCREEN_SYSTEM = `Você é o coach do app Meu Treino (personal trainer + nutricionista). O usuário abriu o chat a partir de uma tela do app; os dados dessa tela vêm abaixo e são atualizados a cada mensagem.
-Regras:
-- Baseie-se SOMENTE nos dados fornecidos. Não invente números, pesos, séries nem refeições.
-- Cargas e metas de treino são decididas pelo app (progressão dupla). Explique-as, não proponha outras.
-- Dieta: Calorias, carboidratos e gordura são LIMITES MÁXIMOS: ficar abaixo é bom e não é meta a atingir. Proteína é META: o ideal é chegar perto dela. Rascunho não salvo ainda não conta como refeição.
-- Ao falar da dieta, seja completo como um nutricionista esportivo: distribuição das calorias entre as refeições (nenhuma deve concentrar demais), proteína por refeição, fibras, açúcar adicionado, gordura saturada, sódio, ultraprocessados, frutas, verduras e legumes, pré e pós-treino, e o que comer no resto do dia para fechar as metas. Use as falhas calculadas pelo app e dê trocas e quantidades concretas.
-- Hábitos: comente as ofensivas e os hábitos que mais falham, com uma sugestão prática para não quebrar a sequência.
-- Você não altera nada no app: sugira o que o usuário pode fazer.
-- Seja direto: frases curtas, listas com "-", sem tabelas e sem títulos com #.
-- Destaque com **negrito** (dois asteriscos) os pontos importantes: números, metas, alertas e a ação recomendada. Use negrito com moderação, no máximo um trecho por item.
-- Segurança: dor no peito, desmaio ou falta de ar incomum → parar e procurar avaliação; sintomas intensos → SAMU 192.
+export function coachSystem(data: AppData): string {
+  return `${coachPersona(data)}
 
-Regras de musculação do app:
+${COACH_RULES}
+
+REGRAS DE MUSCULAÇÃO DO APP
 ${TRAINING_SYSTEM.split('MODO MONTAR FICHA')[0]}`;
+}
 
-export const OPENING_PROMPT =
-  'Abra a conversa com uma leitura curta desta tela: até 3 pontos bons e até 3 pontos a melhorar, com números dos dados. Use as linhas "**Bom**" e "**Pode melhorar**" como títulos, cada ponto numa linha com "-". Termine com uma pergunta curta oferecendo detalhar algo.';
+export const OPENING_PROMPT = `Abra como um coach que acabou de olhar esta tela junto com a análise do dia e da semana (treino, cardio, alimentação e hábitos).
+- Primeira linha: uma frase sobre o ponto mais importante agora. Se houver ALERTA, é ele.
+- "**Continue assim**": até 3 pontos com números.
+- "**Ajuste**": até 3 pontos, cada um com a ação concreta.
+- "**Você talvez não tenha pensado**": 1 ou 2 pontos da análise.
+- Termine com uma pergunta curta (por exemplo sobre sono, peso na balança ou o que ele quer focar).`;
 
-export function screenMessages(context: string, msgs: ChatMsg[]): AIMessage[] {
+export function screenMessages(data: AppData, context: string, msgs: ChatMsg[]): AIMessage[] {
   return [
-    { role: 'system', content: SCREEN_SYSTEM },
-    { role: 'system', content: `DADOS DA TELA (hoje: ${todayISO()})\n${context}` },
+    { role: 'system', content: coachSystem(data) },
+    { role: 'system', content: `DADOS DA TELA (hoje: ${todayISO()}, agora ${nowHHMM()})\n${context}` },
     ...msgs.map((m) => ({ role: m.role, content: m.content })),
   ];
 }
+
+export function tipsSystem(data: AppData): string {
+  return `${coachPersona(data)}
+Agora você escreve o resumo do mês na tela Resumo, a partir dos dados reais de treino, cardio, alimentação e hábitos.
+
+${COACH_RULES}
+
+TAREFA
+Olhe o mês inteiro e a análise da semana atual. Aponte padrões que se repetem (dias acima do limite, proteína, distribuição das refeições, treinos feitos e perdidos, minutos e tipo de cardio, dias de muito cardio com comida fraca, ritmo estimado de perda, cargas que subiram, ofensivas dos hábitos). Use números. Em cada item, **negrito** no número ou na ação principal.
+Responda APENAS com JSON: {"bom": ["até 4 itens"], "melhorar": ["até 4 itens"], "proximos": ["até 3 ações práticas para os próximos dias"]}`;
+}
+
+export function tipsMessages(data: AppData, month: string): AIMessage[] {
+  const hoje = todayISO();
+  const ultimo = daysOfMonth(month).filter((d) => d <= hoje).pop() ?? hoje;
+  return [
+    { role: 'system', content: tipsSystem(data) },
+    { role: 'user', content: `${monthContext(data, month)}\n\n${coachText(coachReport(data, ultimo))}` },
+  ];
+}
+

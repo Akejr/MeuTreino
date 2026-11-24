@@ -314,6 +314,45 @@ export interface SetLog extends Synced {
   confirmadoEm: number;
 }
 
+// ---------- cardio ----------
+
+export type CardioTipo =
+  | 'caminhada'
+  | 'esteira_inclinada'
+  | 'corrida'
+  | 'bike'
+  | 'eliptico'
+  | 'escada'
+  | 'remo'
+  | 'natacao'
+  | 'hiit'
+  | 'outro';
+
+/** Pelo teste da fala: leve = conversa fácil; moderada = frases curtas; intensa = poucas palavras. */
+export type Intensidade = 'leve' | 'moderada' | 'intensa';
+
+/** Uma sessão de cardio. Os campos opcionais melhoram a estimativa de gasto. */
+export interface Cardio extends Synced {
+  id: string;
+  date: string;
+  /** Hora de início (HH:MM). */
+  hora: string;
+  tipo: CardioTipo;
+  minutos: number;
+  intensidade: Intensidade;
+  distanciaKm?: number;
+  /** Inclinação da esteira (%). */
+  inclinacao?: number;
+  /** Potência média da bike ou do remo (W). */
+  watts?: number;
+  /** Frequência cardíaca média (bpm). */
+  fcMedia?: number;
+  /** Calorias mostradas pelo aparelho ou relógio (só referência). */
+  kcalAparelho?: number;
+  obs?: string;
+  criadoEm: number;
+}
+
 // ---------- IA / app ----------
 
 export interface Tips {
@@ -349,6 +388,7 @@ export interface AppData {
   sets: Record<string, SetLog>;
   habits: Record<string, Habit>;
   habitChecks: Record<string, HabitCheck>;
+  cardio: Record<string, Cardio>;
   dietDraft: DietDraft | null;
   aiChats: Record<string, ChatMsg[]>;
   tips: Record<string, Tips>;
@@ -358,5 +398,5 @@ export interface AppData {
   legacy?: Record<string, unknown>;
 }
 
-export const SYNC_COLLECTIONS = ['meals', 'foods', 'equipment', 'plans', 'sessions', 'sets', 'habits', 'habitChecks'] as const;
+export const SYNC_COLLECTIONS = ['meals', 'foods', 'equipment', 'plans', 'sessions', 'sets', 'habits', 'habitChecks', 'cardio'] as const;
 export type SyncCollection = (typeof SYNC_COLLECTIONS)[number];

@@ -6,7 +6,7 @@ import { showSession } from '../../lib/sessionUI';
 import { sessionContext } from '../../lib/prompts';
 import { getData, useData } from '../../lib/storage';
 import { fmtDur, todayISO } from '../../lib/utils';
-import type { AppData, PlanSession, Session, SetLog } from '../../types';
+import type { AppData, Cardio, PlanSession, Session, SetLog } from '../../types';
 import {
   acceptOffer,
   addExtraSlot,
@@ -60,7 +60,10 @@ import {
   type RirPick,
 } from './Cards';
 import EndSheet from './EndSheet';
+import { useCardioSheet } from './Cardio';
 import { exName, ladoLabel, loadUnit, setLine, stepLabel, tipoCurto } from './shared';
+import { cardioOn } from '../../cardio/cardio';
+import { cardioDef } from '../../coach/energy';
 
 function elapsedSec(s: Session, now: number) {
   return s.intervalos.reduce((n, iv) => n + ((iv.f ?? now) - iv.i), 0) / 1000;
@@ -75,7 +78,8 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
   const [editing, setEditing] = useState<SetLog | null>(null);
   const [endOpen, setEndOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  useAIContext(`sessao:${id}`, s ? `${s.key} · ${s.titulo}` : 'Treino', () => sessionContext(getData(), id), 1);
+  const cardio = useCardioSheet(s?.dataReal ?? hoje);
+  useAIContext(`sessao:${id}`, s ? `${s.key} · ${s.titulo}` : 'Treino', () => sessionContext(getData(), id), 1, s?.dataReal ?? hoje);
   const ativo = s?.status === 'em_andamento';
   // Mantém a sessão na tela depois de concluir/encerrar, para mostrar o resumo.
   useEffect(() => {
@@ -170,6 +174,9 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
           <button className="btn ghost-light block" onClick={() => setAddOpen(true)}>
             <IconPlus /> Adicionar exercício
           </button>
+          <button className="btn ghost-light block" onClick={() => cardio.abrir()}>
+            <IconPlus /> Registrar cardio
+          </button>
         </section>
       )}
 
@@ -183,6 +190,8 @@ export default function SessionView({ id, onExit }: { id: string; onExit: () => 
           <IconPlus /> Adicionar exercício
         </button>
       )}
+      <SessionCardio data={data} date={s.dataReal ?? hoje} onAdd={() => cardio.abrir()} onEdit={(c) => cardio.abrir(c)} />
+      {cardio.sheet}
       {s.status === 'em_andamento' && (
         <button className="btn block outline mt12" onClick={() => setEndOpen(true)}>
           Encerrar treino
@@ -447,6 +456,30 @@ function StepCard({ s, ps, step, data, hoje, onAdd }: StepProps) {
         }}
       />
     </section>
+  );
+}
+
+/** Cardio do dia do treino: lista e botão de registrar (antes ou depois da musculação). */
+function SessionCardio({ data, date, onAdd, onEdit }: { data: AppData; date: string; onAdd: () => void; onEdit: (c: Cardio) => void }) {
+  const lista = cardioOn(data, date);
+  return (
+    <>
+      {lista.length > 0 && (
+        <div className="slot-list mt12">
+          {lista.map((c) => (
+            <button key={c.id} className="slot cardio-slot" onClick={() => onEdit(c)}>
+              <div className="slot-name">Cardio · {cardioDef(c.tipo).label}</div>
+              <div className="muted small">
+                {c.minutos} min · {c.intensidade} · {c.hora}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <button className="btn block outline mt12" onClick={onAdd}>
+        <IconPlus /> Registrar cardio
+      </button>
+    </>
   );
 }
 

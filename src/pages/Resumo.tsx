@@ -7,7 +7,8 @@ import { RichInline } from '../components/RichText';
 import { useOnline } from '../lib/hooks';
 import { chatJSON } from '../lib/openrouter';
 import { monthContext, tipsMessages } from '../lib/prompts';
-import { evaluateDay, STATUS_LABEL } from '../lib/score';
+import { evaluateDay, SCORE_VERSION, STATUS_LABEL } from '../lib/score';
+import { cardioDef, estimateCardio, bodyOf } from '../coach/energy';
 import { getData, setDataRaw, useData } from '../lib/storage';
 import { addMonths, daysOfMonth, errMsg, formatLong, formatMonth, monthKey, parseISO, todayISO } from '../lib/utils';
 import type { AppData, Tips } from '../types';
@@ -22,7 +23,20 @@ function signature(data: AppData, month: string): string {
     .map((s) => `${s.id}:${s.status}`);
   const sets = Object.values(data.sets).filter((s) => s.data.startsWith(month)).length;
   const hab = Object.values(data.habitChecks).filter((c) => c.date.startsWith(month)).length;
-  return [ms.sort().join(','), ss.sort().join(','), sets, hab, Object.keys(data.habits).length, JSON.stringify(data.settings.limits), JSON.stringify(data.settings.nutri)].join('|');
+  const cardio = Object.values(data.cardio)
+    .filter((c) => c.date.startsWith(month))
+    .map((c) => `${c.id}:${c._u ?? 0}`);
+  return [
+    `v${SCORE_VERSION}`,
+    ms.sort().join(','),
+    ss.sort().join(','),
+    sets,
+    hab,
+    cardio.sort().join(','),
+    Object.keys(data.habits).length,
+    JSON.stringify(data.settings.limits),
+    JSON.stringify(data.settings.nutri),
+  ].join('|');
 }
 
 export default function Resumo() {
@@ -190,6 +204,12 @@ export default function Resumo() {
           </>
         )}
         <TextList items={selEval.notas} kind="nota" />
+        {selEval.acompanhamento.length > 0 && (
+          <>
+            <div className="label mt12">Qualidade da dieta · só acompanhamento</div>
+            <TextList items={selEval.acompanhamento} kind="nota" />
+          </>
+        )}
         {selEval.meals.length > 0 ? (
           <div className="mt12">
             <MacroBars totals={selEval.totals} limits={data.settings.limits} />
@@ -207,6 +227,17 @@ export default function Resumo() {
             <span className="badge">{selEval.treinos[0].status === 'concluida' ? 'Concluído' : selEval.treinos[0].status === 'em_andamento' ? 'Em andamento' : 'Parcial'}</span>
           )}
         </div>
+        {selEval.cardio.length > 0 && (
+          <div className="day-workout">
+            <span>
+              <span className="label">Cardio</span>
+              <br />
+              {selEval.cardio
+                .map((c) => `${cardioDef(c.tipo).label} ${c.minutos} min · ~${Math.round(estimateCardio(c, bodyOf(data.settings.profile)).kcal)} kcal`)
+                .join(', ')}
+            </span>
+          </div>
+        )}
       </section>
 
       <div className="section-title">Dicas do coach</div>

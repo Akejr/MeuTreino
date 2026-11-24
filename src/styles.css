@@ -1370,6 +1370,113 @@ textarea {
   border: 1.5px solid var(--ink);
   border-radius: 16px;
 }
+/* ---------- cardio ---------- */
+.options.three {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+.options.three .option {
+  padding: 10px 10px;
+  border-radius: 16px;
+}
+.options.three .option-desc {
+  font-size: 12px;
+  line-height: 1.25;
+}
+.cardio-more {
+  margin: 10px 0 4px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+.cardio-more > summary {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.cardio-more[open] > summary {
+  margin-bottom: 6px;
+}
+.cardio-more input {
+  background: var(--surface);
+}
+.cardio-est {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+  font-size: 15px;
+}
+.cardio-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+.cardio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  text-align: left;
+  font-size: 14px;
+}
+.cardio-row:last-child {
+  border-bottom: 0;
+}
+button.cardio-slot {
+  display: block;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  color: inherit;
+}
+/* ---------- coach sem internet ---------- */
+.coach-points {
+  margin: 4px 0 12px;
+}
+.coach-group + .coach-group {
+  margin-top: 12px;
+}
+.coach-group ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.coach-group li {
+  position: relative;
+  padding: 6px 0 6px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.coach-group li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+.coach-group.alerta li::before {
+  background: var(--day-bad);
+}
+.coach-group.bom li::before {
+  background: var(--day-good);
+}
+.coach-why {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
 /* versão nova do app */
 .update-bar {
   display: flex;

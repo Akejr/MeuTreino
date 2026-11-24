@@ -7,10 +7,9 @@ import { ask } from '../components/Dialog';
 import { IconApple, IconCoffee, IconDieta, IconMoon, IconSparkle, IconSun, IconSunrise, IconTrash, IconZap } from '../components/Icons';
 import { KcalCard, MacroGrid } from '../components/MacroBars';
 import NumberField, { OptNumberField } from '../components/NumberField';
-import { RichInline } from '../components/RichText';
 import Segmented from '../components/Segmented';
-import { dietDay, fullTotals, mealChecks, targets } from '../lib/nutrition';
-import { normalizeDicas, normalizeNutriItems, type NutriAI } from '../lib/nutriAI';
+import { dietDay, fullTotals, mealChecks, mealQuality, targets } from '../lib/nutrition';
+import { normalizeNutriItems, type NutriAI } from '../lib/nutriAI';
 import { chatJSON } from '../lib/openrouter';
 import { dietContext, foodsText, nutriMessages } from '../lib/prompts';
 import { mealsOf, sumMacros } from '../lib/score';
@@ -61,22 +60,6 @@ function MacroChips({ m, strong }: { m: Macros; strong?: boolean }) {
   );
 }
 
-function Dicas({ dicas }: { dicas: string[] }) {
-  if (!dicas.length) return null;
-  return (
-    <div className="dicas">
-      <div className="label">Sugestões da IA</div>
-      <ul>
-        {dicas.map((t, k) => (
-          <li key={k}>
-            <RichInline text={t} />
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 const setDraft = (fn: (d: DietDraft | null) => DietDraft | null) => setData((d) => ({ ...d, dietDraft: fn(d.dietDraft) }));
 
 /** Rascunho sem nada digitado nem calculado: pode sair sem perguntar. */
@@ -93,6 +76,8 @@ export default function Dieta() {
     view === 'dia' ? `dieta:${date}` : 'dieta:alimentos',
     view === 'dia' ? `Dieta · ${dayLabel(date)}` : 'Meus alimentos',
     () => (view === 'dia' ? dietContext(getData(), date) : `ALIMENTOS CADASTRADOS\n${foodsText(Object.values(getData().foods))}`),
+    0,
+    view === 'dia' ? date : undefined,
   );
   return (
     <>
@@ -122,6 +107,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
   const finished = date < todayISO();
   const analise = dietDay(data, meals, finished);
   const draftChecks = draft && draft.itens.length ? mealChecks(data, draft) : [];
+  const draftQuality = draft && draft.itens.length ? mealQuality(data, draft) : [];
 
   function newDraft(): DietDraft {
     return { date, refeicao: refeicaoPorHora(new Date().getHours()), hora: nowHHMM(), messages: [], itens: [] };
@@ -136,9 +122,8 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
     try {
       const res = await chatJSON<NutriAI>(getData(), nutriMessages(getData(), withUser));
       const itens = normalizeNutriItems(res.itens, getData().foods);
-      const dicas = normalizeDicas(res.dicas);
       const resposta = typeof res.resposta === 'string' && res.resposta.trim() ? res.resposta.trim() : 'Cálculo atualizado.';
-      setDraft((d) => (d ? { ...d, itens, dicas, messages: [...d.messages, { role: 'assistant', content: resposta, ts: Date.now() }] } : d));
+      setDraft((d) => (d ? { ...d, itens, dicas: undefined, messages: [...d.messages, { role: 'assistant', content: resposta, ts: Date.now() }] } : d));
     } catch (e) {
       setErro(errMsg(e));
     } finally {
@@ -164,7 +149,6 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
       hora: draft.hora,
       itens: draft.itens,
       criadoEm: Date.now(),
-      dicas: draft.dicas?.length ? draft.dicas : undefined,
     };
     setData((d) => ({ ...d, meals: { ...d.meals, [meal.id]: meal }, dietDraft: null }));
     setDate(meal.date);
@@ -188,7 +172,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
       const ok = await ask({ title: 'Substituir o rascunho?', message: 'Já existe uma refeição em rascunho. Ela será descartada para editar esta.', confirm: 'Substituir', danger: true });
       if (!ok) return;
     }
-    setDraft(() => ({ date: m.date, refeicao: m.refeicao, hora: m.hora, editingMealId: m.id, messages: [], itens: m.itens.map((i) => ({ ...i })), dicas: m.dicas }));
+    setDraft(() => ({ date: m.date, refeicao: m.refeicao, hora: m.hora, editingMealId: m.id, messages: [], itens: m.itens.map((i) => ({ ...i })) }));
     setTimeout(() => document.getElementById('draft')?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
 
@@ -282,13 +266,14 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
             ))}
             {draftTotals && <MacroChips m={draftTotals} strong />}
             <QualityCard t={fullTotals(draft.itens)} T={T} title="Qualidade desta refeição (o limite é do dia)" memo="qualidade-refeicao" />
-            {draftChecks.length > 0 && (
+            {(draftChecks.length > 0 || draftQuality.length > 0) && (
               <div className="draft-analysis">
                 <div className="label">Análise desta refeição</div>
                 <IssueList issues={draftChecks} />
+                <TextList items={draftQuality} kind="nota" />
               </div>
             )}
-            <Dicas dicas={draft.dicas ?? []} />
+            <p className="muted small">Para dicas sobre esta refeição, pergunte ao coach no botão do canto.</p>
           </div>
         )}
 
@@ -337,6 +322,12 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
             </>
           )}
           <TextList items={analise.notas} kind="nota" />
+          {analise.acompanhamento.length > 0 && (
+            <>
+              <div className="label mt12">Qualidade · só acompanhamento</div>
+              <TextList items={analise.acompanhamento} kind="nota" />
+            </>
+          )}
         </section>
       )}
 
@@ -372,12 +363,7 @@ function Dia({ data, date, setDate, onAlimentos }: { data: AppData; date: string
             </ul>
             <MacroChips m={t} />
             <IssueList issues={checks} />
-            {m.dicas && m.dicas.length > 0 && (
-              <details className="dicas-details">
-                <summary>Sugestões da IA ({m.dicas.length})</summary>
-                <Dicas dicas={m.dicas} />
-              </details>
-            )}
+            <TextList items={mealQuality(data, m)} kind="nota" />
             <button className="link small" onClick={() => void editar(m)}>
               Editar
             </button>

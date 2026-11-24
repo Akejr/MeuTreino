@@ -65,6 +65,7 @@ export function defaultData(): AppData {
     sets: {},
     habits: {},
     habitChecks: {},
+    cardio: {},
     dietDraft: null,
     aiChats: {},
     tips: {},

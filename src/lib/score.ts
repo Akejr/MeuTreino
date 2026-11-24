@@ -3,13 +3,19 @@
  * - Cada falha tem um nível: leve (1 ponto), média (2) ou grave (4).
  * - Bom = nenhuma falha. Ruim = alguma falha grave ou 5 pontos ou mais. O resto é "mais ou menos".
  * - Hoje só contam os excessos e o que já terminou; o que ainda dá para fazer aparece como pendente.
+ * - A qualidade da dieta (fibras, sódio, açúcar adicionado, saturada, ultraprocessados) é só acompanhamento.
  */
+import { cardioOn } from '../cardio/cardio';
+import { cardioDef } from '../coach/energy';
 import { missedOn } from '../habits/habits';
 import { sessionSteps } from '../training/engine';
 import { planSessionOf } from '../training/schedule';
-import type { AppData, Macros, Meal, Session, SetLog } from '../types';
+import type { AppData, Cardio, Macros, Meal, Session, SetLog } from '../types';
 import { dietDay, type Issue, type Nivel } from './nutrition';
 import { todayISO } from './utils';
+
+/** Sobe quando a regra da nota muda: as dicas do Resumo dos meses antigos são refeitas. */
+export const SCORE_VERSION = 2;
 
 export type DayStatus = 'good' | 'ok' | 'bad' | 'empty';
 export type { Issue, Nivel };
@@ -70,7 +76,10 @@ export interface DayEval {
   meals: Meal[];
   treinos: Session[];
   faltas: Session[];
+  cardio: Cardio[];
   issues: Issue[];
+  /** Qualidade da dieta: acompanhamento, não muda a nota. */
+  acompanhamento: string[];
   /** O que ainda falta fazer hoje. */
   pendentes: string[];
   acertos: string[];
@@ -140,17 +149,22 @@ export function evaluateDay(data: AppData, date: string): DayEval {
   const meals = mealsOf(data, date);
   const totals = sumMacros(meals.flatMap((m) => m.itens));
   const { feitas, naoFeitas } = sessionsOn(data, date);
-  const base = { totals, meals, treinos: feitas, faltas: naoFeitas };
-  const vazio: DayEval = { ...base, status: 'empty', issues: [], pendentes: [], acertos: [], notas: [], pontos: 0, motivos: [] };
+  const cardio = cardioOn(data, date);
+  const base = { totals, meals, treinos: feitas, faltas: naoFeitas, cardio };
+  const vazio: DayEval = { ...base, status: 'empty', issues: [], acompanhamento: [], pendentes: [], acertos: [], notas: [], pontos: 0, motivos: [] };
   if (date > today) return vazio;
 
   const temHabitos = missedOn(data, date).ativos.length > 0;
-  if (!meals.length && !feitas.length && !naoFeitas.length && !temHabitos) return vazio;
+  if (!meals.length && !feitas.length && !naoFeitas.length && !temHabitos && !cardio.length) return vazio;
 
   const finished = date < today;
   const diet = dietDay(data, meals, finished);
   const out = { issues: [...diet.issues], pendentes: [...diet.pendentes], acertos: [...diet.acertos] };
   trainingIssues(data, date, finished, out);
+  if (cardio.length) {
+    const min = cardio.reduce((n, c) => n + c.minutos, 0);
+    out.acertos.push(`Cardio: ${min} min (${cardio.map((c) => `${cardioDef(c.tipo).label.toLowerCase()} ${c.minutos} min`).join(', ')}).`);
+  }
   habitIssues(data, date, finished, out);
 
   const pontos = out.issues.reduce((n, i) => n + PESO[i.nivel], 0);
@@ -162,6 +176,7 @@ export function evaluateDay(data: AppData, date: string): DayEval {
     ...base,
     status,
     issues: out.issues.sort((a, b) => b.nivel - a.nivel),
+    acompanhamento: diet.acompanhamento,
     pendentes: out.pendentes,
     acertos: out.acertos,
     notas: diet.notas,
