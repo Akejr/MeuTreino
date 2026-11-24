@@ -272,6 +272,8 @@ export interface Session extends Synced {
   antes?: { equipment: Record<string, Equipment>; respostas: Record<string, string[]>; naoGosto: string[] };
   /** Exercícios acrescentados só nesta sessão (não mudam a ficha nem outros dias). */
   extras?: PlanSlot[];
+  /** Ordem das vagas só nesta sessão, quando ele reorganiza durante o treino (ex.: um andar da academia de cada vez). */
+  ordem?: string[];
   /** Só na tela: sessão prevista pela ficha numa semana que ainda não foi criada. */
   virtual?: boolean;
 }

@@ -3,7 +3,7 @@ import { getData, setData } from '../lib/storage';
 import { addDays, todayISO, weekStart } from '../lib/utils';
 import type { AppData, Base, Equipment, MotivoTroca, PlanVersion, Session, SetLog, SlotState, Unidade } from '../types';
 import { getEx, resolveExercise } from './catalog';
-import { emptySlotState, extraCandidates, extraSlot, nextWorkPosition, sessionSteps, slotSegments, swapCandidates, type Step } from './engine';
+import { emptySlotState, extraCandidates, extraSlot, nextWorkPosition, reorderView, sessionSteps, slotSegments, swapCandidates, type Step } from './engine';
 import { INITIAL_PLAN_ID, initialPlan } from './initialPlan';
 import { activePlan, applyChanges, computeReschedule, ensureSessions, isPaused, moveSession, planSessionOf, type Change } from './schedule';
 
@@ -304,6 +304,23 @@ export function addExtraSlot(sessionId: string, exerciseId: string) {
     let k = 1;
     while (ids.has(`X${k}`)) k++;
     return patchSession(d, sessionId, (x) => ({ ...x, extras: [...(x.extras ?? []), extraSlot(`X${k}`, exerciseId)] }));
+  });
+}
+
+/**
+ * Muda a ordem dos exercícios só nesta sessão. `livres` = vagas ainda sem série, na nova ordem.
+ * As que já começaram ficam no lugar, antes delas. A ficha e os outros dias não mudam.
+ */
+export function reorderSlots(sessionId: string, livres: string[]) {
+  setData((d) => {
+    const s = d.sessions[sessionId];
+    const ps = s && planSessionOf(d, s);
+    if (!s || !ps || s.status !== 'em_andamento') return d;
+    const v = reorderView(ps, sessionId, d.sets);
+    if (livres.length !== v.livres.length || !v.livres.every((id) => livres.includes(id))) return d;
+    const ordem = [...v.travadas, ...livres];
+    if (ordem.join('|') === ps.slots.map((x) => x.id).join('|')) return d;
+    return patchSession(d, sessionId, (x) => ({ ...x, ordem }));
   });
 }
 

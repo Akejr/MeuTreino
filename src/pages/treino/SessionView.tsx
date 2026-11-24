@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAIContext } from '../../components/AIChat';
-import { IconAlert, IconBack, IconCheck, IconPause, IconPlus, IconSkip, IconSwap } from '../../components/Icons';
+import { IconAlert, IconBack, IconCheck, IconGrip, IconPause, IconPlus, IconSkip, IconSwap } from '../../components/Icons';
+import { useDragReorder } from '../../components/useDragReorder';
 import { useNow } from '../../lib/hooks';
 import { showSession } from '../../lib/sessionUI';
 import { sessionContext } from '../../lib/prompts';
@@ -17,6 +18,7 @@ import {
   finishSession,
   pauseSession,
   removeExtraSlot,
+  reorderSlots,
   setPainCheck,
   setSlotStatus,
   showNextAlternative,
@@ -34,6 +36,7 @@ import {
   fmtPct,
   fmtW,
   harder,
+  reorderView,
   sessionSteps,
   slotActive,
   slotSegments,
@@ -570,9 +573,23 @@ function Summary({ s, ps, data }: { s: Session; ps: PlanSession; data: AppData }
 function SlotList({ s, ps, data, current, onEdit }: { s: Session; ps: PlanSession; data: AppData; current?: Step; onEdit: (x: SetLog) => void }) {
   const t = data.settings.training;
   const all = sessionSteps(ps, s, t);
+  const editavel = s.status === 'em_andamento';
+  // Durante o treino: as vagas já começadas ficam no lugar; as outras podem ser arrastadas.
+  const v = reorderView(ps, s.id, data.sets);
+  const livres = editavel ? v.livres : [];
+  const ordem = editavel ? [...v.travadas, ...v.livres] : ps.slots.map((x) => x.id);
+  const porId = new Map(ps.slots.map((x) => [x.id, x]));
+  const dnd = useDragReorder(livres, (ids) => reorderSlots(s.id, ids));
+  const podeArrastar = livres.length >= 2;
   return (
-    <div className="slot-list">
-      {ps.slots.map((slot) => {
+    <>
+      {podeArrastar && (
+        <p className="muted small drag-hint">
+          <IconGrip className="i14" /> Segure e arraste para mudar a ordem só neste treino.
+        </p>
+      )}
+      <div className={`slot-list ${dnd.drag ? 'sorting' : ''}`}>
+      {ordem.map((id) => porId.get(id)!).map((slot) => {
         const st = s.slots[slot.id];
         const segs = slotSegments(slot, st, t);
         const mine = all.filter((x) => x.slotId === slot.id);
@@ -584,8 +601,14 @@ function SlotList({ s, ps, data, current, onEdit }: { s: Session; ps: PlanSessio
         const status = st?.status ?? 'ativo';
         const isCur = current?.slotId === slot.id;
         const extra = !!s.extras?.some((x) => x.id === slot.id);
+        const arrastavel = podeArrastar && livres.includes(slot.id);
         return (
-          <div key={slot.id} className={`slot ${isCur ? 'cur' : ''} ${status !== 'ativo' ? 'off' : ''} ${work.length && feitos === work.length ? 'done' : ''}`}>
+          <div
+            key={slot.id}
+            ref={arrastavel ? dnd.register(slot.id) : undefined}
+            style={arrastavel ? dnd.styleFor(slot.id) : undefined}
+            className={`slot ${isCur ? 'cur' : ''} ${status !== 'ativo' ? 'off' : ''} ${work.length && feitos === work.length ? 'done' : ''} ${dnd.drag?.id === slot.id ? 'dragging' : ''}`}
+          >
             <div className="slot-head">
               <div className="grow">
                 <div className="slot-name">{segs.map((x) => exName(x.exerciseId)).join(' → ')}</div>
@@ -604,6 +627,11 @@ function SlotList({ s, ps, data, current, onEdit }: { s: Session; ps: PlanSessio
               <span className="count">
                 {feitos}/{work.length}
               </span>
+              {arrastavel && (
+                <button className="drag-handle" aria-label={`Arrastar ${segs.map((x) => exName(x.exerciseId)).join(' → ')}`} {...dnd.handleProps(slot.id)}>
+                  <IconGrip />
+                </button>
+              )}
             </div>
             {registros.length > 0 && (
               <div className="sets">
@@ -623,6 +651,7 @@ function SlotList({ s, ps, data, current, onEdit }: { s: Session; ps: PlanSessio
           </div>
         );
       })}
-    </div>
+      </div>
+    </>
   );
 }

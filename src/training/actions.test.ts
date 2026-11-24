@@ -12,10 +12,11 @@ import {
   finishSession,
   pauseSession,
   removeExtraSlot,
+  reorderSlots,
   saveEquipment,
   startSession,
 } from './actions';
-import { currentStep, extraCandidates } from './engine';
+import { currentStep, extraCandidates, sessionSteps } from './engine';
 import { getEx } from './catalog';
 import { isPaused, planSessionOf } from './schedule';
 
@@ -99,6 +100,50 @@ describe('encerrar treino', () => {
     discardSession(s.id);
     d = getData();
     expect(d.sessions[s.id].extras).toBeUndefined();
+  });
+
+  it('mudar a ordem: só nesta sessão, começadas ficam no lugar, aquecimento acompanha e perder progresso desfaz', () => {
+    const s = sessaoDeHoje();
+    const planoAntes = JSON.stringify(getData().plans);
+    const ids0 = planSessionOf(getData(), getData().sessions[s.id])!.slots.map((x) => x.id);
+    reorderSlots(s.id, [...ids0].reverse());
+    expect(getData().sessions[s.id].ordem).toBeUndefined(); // fora do treino não muda
+
+    startSession(s.id);
+    const ultimo = ids0[ids0.length - 1];
+    reorderSlots(s.id, [ultimo, ...ids0.slice(0, -1)]);
+    let d = getData();
+    let ps = planSessionOf(d, d.sessions[s.id])!;
+    expect(ps.slots.map((x) => x.id)).toEqual([ultimo, ...ids0.slice(0, -1)]);
+    expect(JSON.stringify(d.plans)).toBe(planoAntes);
+    // o primeiro exercício agora é o que foi movido, com o aquecimento geral
+    const first = currentStep(ps, d.sessions[s.id], d)!;
+    expect(first.slotId).toBe(ultimo);
+    expect(first.tipo).toBe('aquecimento');
+    // as séries de trabalho são as mesmas, só muda a ordem
+    const trabalho = (xs: ReturnType<typeof currentStepsFor>) => xs.filter((x) => x.tipo === 'trabalho').map((x) => x.id).sort();
+    expect(trabalho(currentStepsFor(s.id))).toEqual(trabalho(sessionSteps(ps, { ...d.sessions[s.id], ordem: undefined }, d.settings.training)));
+
+    // depois de registrar uma série, essa vaga não sai do lugar
+    saveEquipment(getEx(first.exerciseId).equip, 'kg', 'total');
+    confirmStep(s.id, first, { carga: 10, reps: 8, rir: null, ajuda: false, dor: false, cargaSugerida: null, metaReps: 8 });
+    reorderSlots(s.id, ids0.slice(0, -1)); // não inclui a vaga começada: aceita
+    expect(planSessionOf(getData(), getData().sessions[s.id])!.slots[0].id).toBe(ultimo);
+    reorderSlots(s.id, [...ids0].reverse()); // tenta mover a vaga começada: ignora
+    expect(planSessionOf(getData(), getData().sessions[s.id])!.slots[0].id).toBe(ultimo);
+    reorderSlots(s.id, [ids0[2], ids0[0], ids0[1], ...ids0.slice(3, -1)]);
+    d = getData();
+    ps = planSessionOf(d, d.sessions[s.id])!;
+    expect(ps.slots.map((x) => x.id).slice(0, 4)).toEqual([ultimo, ids0[2], ids0[0], ids0[1]]);
+
+    // exercício extra acrescentado depois vai para o fim
+    addExtraSlot(s.id, extraCandidates(ps, d.sessions[s.id], d.settings.training)[0]);
+    const slots = planSessionOf(getData(), getData().sessions[s.id])!.slots;
+    expect(slots[slots.length - 1].id).toMatch(/^X/);
+
+    discardSession(s.id);
+    expect(getData().sessions[s.id].ordem).toBeUndefined();
+    expect(planSessionOf(getData(), getData().sessions[s.id])!.slots.map((x) => x.id)).toEqual(ids0);
   });
 
   it('peso diferente da série anterior fica marcado como ajuste; reserva aproximada é guardada', () => {

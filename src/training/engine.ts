@@ -669,6 +669,20 @@ export function sessionSteps(ps: PlanSession, session: Session, t: TrainingSetti
 
 export const isResolved = (step: Step, sets: Record<string, SetLog>) => !!sets[step.id];
 
+/** Vagas que já têm alguma série registrada (feita ou pulada) na sessão: ficam no lugar ao reordenar. */
+export function slotsComRegistro(sets: Record<string, SetLog>, sessionId: string): Set<string> {
+  const out = new Set<string>();
+  for (const x of Object.values(sets)) if (x.sessionId === sessionId) out.add(x.slotId);
+  return out;
+}
+
+/** Ordem para mostrar e arrastar: as vagas já começadas primeiro, depois as livres, cada grupo na ordem atual. */
+export function reorderView(ps: PlanSession, sessionId: string, sets: Record<string, SetLog>) {
+  const travadas = slotsComRegistro(sets, sessionId);
+  const ids = ps.slots.map((x) => x.id);
+  return { travadas: ids.filter((id) => travadas.has(id)), livres: ids.filter((id) => !travadas.has(id)) };
+}
+
 export function slotActive(session: Session, slotId: string) {
   return (session.slots[slotId]?.status ?? 'ativo') === 'ativo';
 }

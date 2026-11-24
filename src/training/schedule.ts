@@ -15,11 +15,20 @@ export function activePlan(d: AppData): PlanVersion | undefined {
 
 export const sessionIdFor = (week: string, key: string) => `s-${week}-${key}`;
 
-/** Sessão da ficha, com os exercícios acrescentados só neste dia. */
+/** Sessão da ficha, com os exercícios acrescentados só neste dia e na ordem que ele escolheu para hoje. */
 export function planSessionOf(d: AppData, s: Session): PlanSession | undefined {
   const ps = d.plans[s.planId]?.sessoes.find((x) => x.key === s.key);
-  if (!ps || !s.extras?.length) return ps;
-  return { ...ps, slots: [...ps.slots, ...s.extras] };
+  if (!ps || (!s.extras?.length && !s.ordem?.length)) return ps;
+  let slots = s.extras?.length ? [...ps.slots, ...s.extras] : [...ps.slots];
+  if (s.ordem?.length) {
+    // Vaga fora da lista (ex.: exercício extra acrescentado depois) fica no fim, na ordem original.
+    const pos = new Map(s.ordem.map((id, i) => [id, i]));
+    slots = slots
+      .map((x, i) => ({ x, k: pos.get(x.id) ?? 1e6 + i }))
+      .sort((a, b) => a.k - b.k)
+      .map((o) => o.x);
+  }
+  return { ...ps, slots };
 }
 
 const keyOrder = (k: string) => k.charCodeAt(0);

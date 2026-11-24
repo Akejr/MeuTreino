@@ -20,6 +20,12 @@ const mk = (d: string | string[]) => (p: P) => (
   </svg>
 );
 
+/** Alça de arrastar (6 pontos). */
+export const IconGrip = (p: P) => (
+  <svg {...base} {...p} stroke="none" fill="currentColor">
+    {[8, 16].map((x) => [6, 12, 18].map((y) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.7} />))}
+  </svg>
+);
 export const IconTreino = mk('M6.5 6.5v11M17.5 6.5v11M3 9v6M21 9v6M6.5 12h11');
 export const IconDieta = mk('M7 2v8a2 2 0 0 0 2 2v10M11 2v8a2 2 0 0 1-2 2M17 22V2c-2 1.5-3 4-3 7s1 4 3 4');
 export const IconResumo = (p: P) => (
